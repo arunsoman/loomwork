@@ -10,7 +10,7 @@ Single binary · Local LLM · Signed packaging · <60 seconds to first value
 ## Install (one command)
 
 ```bash
-curl -fsSL https://loomwork.dev/install.sh | sh
+curl -fsSL https://raw.githubusercontent.com/arunsoman/loomwork/main/go/install.sh | sh
 ```
 
 Or download a prebuilt binary:
