@@ -1,0 +1,12 @@
+{
+  "fs.read": ["$HOME/agent-workspace/coding/**", "/tmp/agent/**"],
+  "fs.write": ["$HOME/agent-workspace/coding/**", "/tmp/agent/coding/**"],
+  "net.egress": ["api.github.com", "github.com", "registry.npmjs.org", "pypi.org"],
+  "net.listen": [],
+  "syscalls.allow": ["read", "write", "openat", "close", "mmap", "munmap", "brk", "execve", "wait4", "pipe", "dup2", "chdir"],
+  "syscalls.deny": ["fork", "clone", "ptrace"],
+  "resources.cpu": "4",
+  "resources.memory": "8GiB",
+  "resources.disk": "20GiB",
+  "time.maxWall": "2h"
+}

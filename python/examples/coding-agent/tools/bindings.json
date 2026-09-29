@@ -1,0 +1,22 @@
+{
+  "bindings": [
+    {
+      "name": "filesystem",
+      "mcpServer": "stdio:///usr/local/bin/mcp-fs",
+      "allowedTools": ["read_file", "write_file", "list_dir", "delete_file", "mkdir"],
+      "scope": { "paths": ["$HOME/agent-workspace/coding/**"] }
+    },
+    {
+      "name": "github",
+      "mcpServer": "stdio:///usr/local/bin/mcp-github",
+      "allowedTools": ["get_issue", "create_branch", "commit", "push", "create_pr", "get_checks"],
+      "scope": { "repos": ["loomwork/*"] }
+    },
+    {
+      "name": "shell",
+      "mcpServer": "stdio:///usr/local/bin/mcp-shell",
+      "allowedTools": ["run", "run_in_cwd"],
+      "scope": { "commands": ["pytest", "ruff", "mypy", "git", "make"] }
+    }
+  ]
+}

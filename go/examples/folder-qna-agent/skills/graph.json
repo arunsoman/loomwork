@@ -1,0 +1,20 @@
+{
+  "skills": [
+    {
+      "name": "index_folder",
+      "description": "Walk a folder and produce a structured index of its contents.",
+      "inputs":  { "path": "string", "maxFiles": "int? = 200" },
+      "outputs": { "index": "string", "fileCount": "int" },
+      "requires": [],
+      "impl": null
+    },
+    {
+      "name": "answer_question",
+      "description": "Answer a question about the indexed folder, citing specific files.",
+      "inputs":  { "question": "string", "index": "string" },
+      "outputs": { "answer": "string", "citations": "array<string>" },
+      "requires": ["index_folder"],
+      "impl": null
+    }
+  ]
+}

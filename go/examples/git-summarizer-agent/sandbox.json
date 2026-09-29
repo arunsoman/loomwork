@@ -1,0 +1,10 @@
+{
+  "fs.read": ["**"],
+  "fs.write": ["$HOME/.loomwork/workspace/**"],
+  "net.egress": ["localhost", "127.0.0.1"],
+  "net.listen": [],
+  "syscalls.allow": ["read", "write", "openat", "close", "execve", "wait4", "pipe", "dup2", "chdir"],
+  "resources.cpu": "1",
+  "resources.memory": "1GiB",
+  "time.maxWall": "5m"
+}

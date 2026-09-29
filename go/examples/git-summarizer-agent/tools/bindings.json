@@ -1,0 +1,16 @@
+{
+  "bindings": [
+    {
+      "name": "filesystem",
+      "mcpServer": "stdio:///usr/local/bin/mcp-fs",
+      "allowedTools": ["read_file", "list_dir"],
+      "scope": { "paths": ["$HOME/**", "/tmp/**"] }
+    },
+    {
+      "name": "shell",
+      "mcpServer": "stdio:///usr/local/bin/mcp-shell",
+      "allowedTools": ["run"],
+      "scope": { "commands": ["git log", "git branch", "git status", "git diff --stat"] }
+    }
+  ]
+}

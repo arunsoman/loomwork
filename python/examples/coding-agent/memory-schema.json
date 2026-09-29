@@ -1,0 +1,22 @@
+{
+  "$schema": "https://loomwork.dev/schemas/memory/v0.1.json",
+  "stores": {
+    "episodic": {
+      "type": "timeline",
+      "retention": "180d",
+      "fields": ["task_id", "repo", "issue_number", "pr_number", "outcome"]
+    },
+    "semantic": {
+      "type": "graph",
+      "fields": ["repo", "convention", "example_commit"]
+    },
+    "procedural": {
+      "type": "vector",
+      "embeddingModel": "bge-code-en-v1.5",
+      "dimensions": 384,
+      "fields": ["pattern", "fix_recipe", "applies_to"]
+    }
+  },
+  "encryption": { "algorithm": "AES-256-GCM", "keyDerivation": "PBKDF2-SHA256-200k" },
+  "provenance": { "required": true, "signatureAlgorithm": "Ed25519" }
+}

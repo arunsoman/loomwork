@@ -1,0 +1,20 @@
+{
+  "skills": [
+    {
+      "name": "parse_transcript",
+      "description": "Read a meeting transcript file and extract speaker turns.",
+      "inputs":  { "path": "string" },
+      "outputs": { "turns": "array<Turn>", "attendees": "array<string>" },
+      "requires": [],
+      "impl": null
+    },
+    {
+      "name": "extract_notes",
+      "description": "Extract structured notes from parsed turns: decisions, action items, open questions.",
+      "inputs":  { "turns": "array<Turn>" },
+      "outputs": { "decisions": "array<Decision>", "actionItems": "array<ActionItem>", "openQuestions": "array<string>" },
+      "requires": ["parse_transcript"],
+      "impl": null
+    }
+  ]
+}

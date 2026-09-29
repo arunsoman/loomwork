@@ -1,0 +1,12 @@
+{
+  "fs.read": ["$HOME/agent-workspace/research/**", "/tmp/agent/**"],
+  "fs.write": ["/tmp/agent/research/**"],
+  "net.egress": ["*.wikipedia.org", "arxiv.org", "github.com", "api.github.com", "loomwork.dev", "*.openalex.org"],
+  "net.listen": [],
+  "syscalls.allow": ["read", "write", "openat", "close", "mmap", "munmap", "brk"],
+  "syscalls.deny": ["execve", "fork", "clone", "ptrace"],
+  "resources.cpu": "2",
+  "resources.memory": "4GiB",
+  "resources.disk": "10GiB",
+  "time.maxWall": "30m"
+}

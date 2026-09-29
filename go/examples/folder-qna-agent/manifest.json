@@ -1,0 +1,45 @@
+{
+  "apiVersion": "aci.loomwork.dev/v0.1",
+  "kind": "Agent",
+  "metadata": {
+    "name": "folder-qna-agent",
+    "version": "v0.1.0",
+    "architecture": "amd64",
+    "os": "any",
+    "description": "Point it at any folder, ask questions about the contents. The simplest useful agent — answers cite specific file paths.",
+    "license": "Apache-2.0",
+    "homepage": "https://loomwork.dev/examples/folder-qna-agent"
+  },
+  "persona": {
+    "systemPrompt": "persona/system_prompt.md",
+    "modelPrefs": {
+      "minContextWindow": 32768,
+      "preferred": ["llama3.2", "qwen2.5", "phi3"],
+      "temperature": 0.2,
+      "tokenBudget": {
+        "perTurn": 4096,
+        "perSession": 131072,
+        "hardLimit": 1048576
+      }
+    },
+    "capabilities": {
+      "supportsStreaming": true,
+      "supportsTools": true,
+      "supportsVision": false,
+      "supportsCodeExecution": false
+    }
+  },
+  "skills": {
+    "graph": "skills/graph.json"
+  },
+  "tools": {
+    "bindings": "tools/bindings.json"
+  },
+  "memory": {
+    "schema": "memory-schema.json"
+  },
+  "sandbox": {
+    "spec": "sandbox.json"
+  },
+  "digests": {}
+}

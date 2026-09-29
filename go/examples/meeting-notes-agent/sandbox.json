@@ -1,0 +1,9 @@
+{
+  "fs.read": ["$HOME/Documents/**", "/tmp/**"],
+  "fs.write": ["$HOME/.loomwork/workspace/**", "$HOME/Documents/notes/**"],
+  "net.egress": ["localhost", "127.0.0.1"],
+  "net.listen": [],
+  "resources.cpu": "1",
+  "resources.memory": "2GiB",
+  "time.maxWall": "5m"
+}

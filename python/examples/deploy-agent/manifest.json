@@ -1,0 +1,58 @@
+{
+  "apiVersion": "aci.loomwork.dev/v0.1",
+  "kind": "Agent",
+  "metadata": {
+    "name": "deploy-agent",
+    "version": "v0.1.0",
+    "architecture": "amd64",
+    "os": "linux",
+    "description": "Deployment agent \u2014 verifies artifacts, ships to staging/prod.",
+    "license": "Apache-2.0",
+    "homepage": "https://loomwork.dev/examples/deploy-agent"
+  },
+  "persona": {
+    "systemPrompt": "persona/system_prompt.md",
+    "modelPrefs": {
+      "minContextWindow": 32768,
+      "preferred": [
+        "claude-sonnet-4.5",
+        "gpt-5",
+        "llama-3.3-70b"
+      ],
+      "fallback": [
+        "llama-3.1-8b"
+      ],
+      "temperature": 0.0,
+      "tokenBudget": {
+        "perTurn": 4096,
+        "perSession": 65536,
+        "hardLimit": 524288
+      }
+    },
+    "capabilities": {
+      "supportsStreaming": false,
+      "supportsTools": true,
+      "supportsVision": false,
+      "supportsCodeExecution": false
+    }
+  },
+  "skills": {
+    "graph": "skills/graph.json"
+  },
+  "tools": {
+    "bindings": "tools/bindings.json"
+  },
+  "memory": {
+    "schema": "memory-schema.json"
+  },
+  "sandbox": {
+    "spec": "sandbox.json"
+  },
+  "digests": {
+    "persona/system_prompt.md": "sha256:e3a646ddff4f188defe36f46bd61f1808bd95303d5908f5b0674d1ba68dc79c1",
+    "skills/graph.json": "sha256:d737f72a8354af8647e1772716150f630c2ea47cad7987c4635523f093320f85",
+    "tools/bindings.json": "sha256:cbc7f06d0dd0fe6a3e5f53ed4070baae98e0bc8546d8c8f43b1addea39669ad5",
+    "memory-schema.json": "sha256:2c39b39e0c09987b3ceb373f9718c421cc00fc49b0aa8a761f8783a78e5475af",
+    "sandbox.json": "sha256:70ebe2db4d38ce2f5c3629dcbfb4b70f34ebb236096ab8f48281b3f66b9250b7"
+  }
+}

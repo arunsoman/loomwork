@@ -1,0 +1,18 @@
+{
+  "apiVersion": "aci.loomwork.dev/v0.1",
+  "kind": "Agent",
+  "metadata": {
+    "name": "git-summarizer-agent",
+    "version": "v0.1.0",
+    "architecture": "amd64",
+    "os": "any",
+    "description": "Point it at a git repo, get a human-readable summary of recent commits, branches, and outstanding work.",
+    "license": "Apache-2.0"
+  },
+  "persona": {"systemPrompt": "persona/system_prompt.md", "modelPrefs": {"preferred": ["llama3.2"], "temperature": 0.3, "tokenBudget": {"perTurn": 4096, "perSession": 131072, "hardLimit": 1048576}}},
+  "skills": {"graph": "skills/graph.json"},
+  "tools": {"bindings": "tools/bindings.json"},
+  "memory": {"schema": "memory-schema.json"},
+  "sandbox": {"spec": "sandbox.json"},
+  "digests": {}
+}

@@ -1,0 +1,7 @@
+{
+  "$schema": "https://loomwork.dev/schemas/memory/v0.1.json",
+  "kinds": ["episode", "artifact", "preference"],
+  "provenance": { "required": true, "citedSources": true },
+  "sensitivity": ["low", "medium"],
+  "retention": { "default": "until_revoked" }
+}

@@ -1,0 +1,28 @@
+{
+  "$schema": "https://loomwork.dev/schemas/memory/v0.1.json",
+  "stores": {
+    "episodic": {
+      "type": "timeline",
+      "retention": "90d",
+      "fields": ["task_id", "query", "results_count", "duration_ms"]
+    },
+    "semantic": {
+      "type": "graph",
+      "fields": ["subject", "predicate", "object", "confidence"]
+    },
+    "procedural": {
+      "type": "vector",
+      "embeddingModel": "bge-small-en-v1.5",
+      "dimensions": 384,
+      "fields": ["skill", "trigger_pattern", "execution_summary"]
+    }
+  },
+  "encryption": {
+    "algorithm": "AES-256-GCM",
+    "keyDerivation": "PBKDF2-SHA256-200k"
+  },
+  "provenance": {
+    "required": true,
+    "signatureAlgorithm": "Ed25519"
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "skills": [
+    {
+      "name": "read_git_log",
+      "description": "Read the git log of a repository.",
+      "inputs":  { "repoPath": "string", "count": "int? = 20" },
+      "outputs": { "commits": "array<Commit>" },
+      "requires": [],
+      "impl": null
+    },
+    {
+      "name": "summarize_activity",
+      "description": "Produce a human-readable summary of recent git activity, grouped by theme.",
+      "inputs":  { "commits": "array<Commit>", "days": "int? = 14" },
+      "outputs": { "summary": "string", "themes": "array<Theme>", "openWork": "array<string>" },
+      "requires": ["read_git_log"],
+      "impl": null
+    }
+  ]
+}

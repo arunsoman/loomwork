@@ -1,0 +1,18 @@
+{
+  "apiVersion": "aci.loomwork.dev/v0.1",
+  "kind": "Agent",
+  "metadata": {
+    "name": "meeting-notes-agent",
+    "version": "v0.1.0",
+    "architecture": "amd64",
+    "os": "any",
+    "description": "Drop a meeting transcript (txt/md) on it, get structured notes: decisions, action items, open questions.",
+    "license": "Apache-2.0"
+  },
+  "persona": {"systemPrompt": "persona/system_prompt.md", "modelPrefs": {"preferred": ["llama3.2"], "temperature": 0.1, "tokenBudget": {"perTurn": 8192, "perSession": 262144, "hardLimit": 2097152}}},
+  "skills": {"graph": "skills/graph.json"},
+  "tools": {"bindings": "tools/bindings.json"},
+  "memory": {"schema": "memory-schema.json"},
+  "sandbox": {"spec": "sandbox.json"},
+  "digests": {}
+}

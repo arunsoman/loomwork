@@ -1,0 +1,60 @@
+{
+  "apiVersion": "aci.loomwork.dev/v0.1",
+  "kind": "Agent",
+  "metadata": {
+    "name": "research-agent",
+    "version": "v0.1.0",
+    "architecture": "amd64",
+    "os": "linux",
+    "description": "Web research agent \u2014 searches, fetches, and summarizes pages.",
+    "license": "Apache-2.0",
+    "homepage": "https://loomwork.dev/examples/research-agent"
+  },
+  "persona": {
+    "systemPrompt": "persona/system_prompt.md",
+    "fewShot": "persona/few_shot.jsonl",
+    "modelPrefs": {
+      "minContextWindow": 32768,
+      "preferred": [
+        "claude-sonnet-4.5",
+        "gpt-5",
+        "llama-3.3-70b"
+      ],
+      "fallback": [
+        "llama-3.1-8b"
+      ],
+      "temperature": 0.2,
+      "tokenBudget": {
+        "perTurn": 4096,
+        "perSession": 131072,
+        "hardLimit": 1048576
+      }
+    },
+    "capabilities": {
+      "supportsStreaming": true,
+      "supportsTools": true,
+      "supportsVision": false,
+      "supportsCodeExecution": false
+    }
+  },
+  "skills": {
+    "graph": "skills/graph.json"
+  },
+  "tools": {
+    "bindings": "tools/bindings.json"
+  },
+  "memory": {
+    "schema": "memory-schema.json"
+  },
+  "sandbox": {
+    "spec": "sandbox.json"
+  },
+  "digests": {
+    "persona/system_prompt.md": "sha256:661cbd1091aab20ed829f4a4f5f1cca83de4cdf707bcedece11de4f787169949",
+    "persona/few_shot.jsonl": "sha256:aa06e49abfe5f2486dac010eefd521e6429e470c32a0730e9567d111cfeecf70",
+    "skills/graph.json": "sha256:900e641dae9b3541a9af7b2512c7ff0dd61b1f3e080455ce0af6980cded4838d",
+    "tools/bindings.json": "sha256:789e972aacef49feed80a1396bcdb3851e69539ef01e7e8dbd7a2e56eed5e651",
+    "memory-schema.json": "sha256:2e62f170a2bf203bab36e07111b290aff099f84b8dc04d030aca65c3d334fdab",
+    "sandbox.json": "sha256:bc225a76886dea7e5c7e08324ed6f20aa6374ef36f37fb147481bddd15752175"
+  }
+}

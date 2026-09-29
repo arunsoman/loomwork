@@ -1,0 +1,249 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Loomwork — the .aci that makes agents portable</title>
+<meta name="description" content="Pocketbase for agents. Single binary. Local LLM. Signed, portable .aci files. <60 seconds to first value.">
+<style>
+  :root {
+    --bg: #0d0c0a;
+    --bg-2: #18150f;
+    --fg: #f5f1e8;
+    --muted: #8a8270;
+    --accent: #c89a2e;
+    --accent-2: #4da8c6;
+    --border: #2a2620;
+    --code-bg: #1a1814;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { background: var(--bg); color: var(--fg); font-family: -apple-system, BlinkMacSystemFont, "Inter", "Segoe UI", sans-serif; -webkit-font-smoothing: antialiased; }
+  body { line-height: 1.55; }
+  .container { max-width: 920px; margin: 0 auto; padding: 0 24px; }
+
+  /* Nav */
+  nav { display: flex; justify-content: space-between; align-items: center; padding: 20px 0; border-bottom: 1px solid var(--border); }
+  .logo { font-weight: 800; font-size: 18px; letter-spacing: -0.02em; }
+  .logo .dot { color: var(--accent); }
+  nav .links a { color: var(--muted); text-decoration: none; margin-left: 24px; font-size: 14px; }
+  nav .links a:hover { color: var(--fg); }
+
+  /* Hero */
+  .hero { padding: 80px 0 60px; text-align: center; }
+  .eyebrow { display: inline-block; padding: 4px 12px; border: 1px solid var(--border); border-radius: 100px; font-size: 12px; color: var(--accent); letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 24px; }
+  h1 { font-size: clamp(40px, 7vw, 72px); font-weight: 900; line-height: 1.05; letter-spacing: -0.035em; margin-bottom: 20px; }
+  h1 .accent { color: var(--accent); }
+  .tagline { font-size: 20px; color: var(--muted); max-width: 580px; margin: 0 auto 36px; line-height: 1.5; }
+  .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-bottom: 20px; }
+  .cta { display: inline-flex; align-items: center; gap: 8px; padding: 14px 24px; border-radius: 8px; font-weight: 600; font-size: 15px; text-decoration: none; transition: transform 0.1s; }
+  .cta:hover { transform: translateY(-1px); }
+  .cta-primary { background: var(--accent); color: #0d0c0a; }
+  .cta-secondary { border: 1px solid var(--border); color: var(--fg); }
+  .cta code { font-family: "SF Mono", "JetBrains Mono", monospace; font-size: 13px; }
+  .install-cmd { font-family: "SF Mono", "JetBrains Mono", monospace; font-size: 14px; color: var(--muted); background: var(--code-bg); padding: 8px 16px; border-radius: 6px; border: 1px solid var(--border); display: inline-block; }
+  .install-cmd .prompt { color: var(--accent); }
+
+  /* Demo section */
+  .demo { padding: 60px 0; border-top: 1px solid var(--border); }
+  .section-label { font-size: 12px; color: var(--accent); letter-spacing: 0.12em; text-transform: uppercase; margin-bottom: 12px; }
+  h2 { font-size: 36px; font-weight: 800; letter-spacing: -0.02em; margin-bottom: 16px; line-height: 1.15; }
+  .demo .sub { color: var(--muted); font-size: 17px; margin-bottom: 32px; max-width: 640px; }
+  .terminal { background: var(--code-bg); border: 1px solid var(--border); border-radius: 10px; overflow: hidden; font-family: "SF Mono", "JetBrains Mono", monospace; font-size: 13.5px; line-height: 1.6; }
+  .terminal-head { background: var(--bg-2); padding: 10px 16px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 8px; }
+  .terminal-head .dot { width: 12px; height: 12px; border-radius: 50%; }
+  .terminal-head .dot.r { background: #ff5f56; }
+  .terminal-head .dot.y { background: #ffbd2e; }
+  .terminal-head .dot.g { background: #27c93f; }
+  .terminal-head .title { color: var(--muted); font-size: 12px; margin-left: 8px; }
+  .terminal-body { padding: 20px 24px; color: var(--fg); white-space: pre; overflow-x: auto; }
+  .terminal-body .prompt { color: var(--accent); }
+  .terminal-body .comment { color: var(--muted); }
+  .terminal-body .ok { color: #27c93f; }
+  .terminal-body .accent { color: var(--accent-2); }
+
+  /* Beats */
+  .beats { padding: 60px 0; border-top: 1px solid var(--border); }
+  .beats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 20px; margin-top: 32px; }
+  .beat { background: var(--bg-2); border: 1px solid var(--border); border-radius: 10px; padding: 24px; }
+  .beat .num { font-size: 12px; color: var(--accent); font-weight: 700; letter-spacing: 0.1em; margin-bottom: 8px; }
+  .beat h3 { font-size: 17px; font-weight: 700; margin-bottom: 8px; }
+  .beat p { color: var(--muted); font-size: 14px; line-height: 1.55; }
+
+  /* Pocketbase framing */
+  .framing { padding: 80px 0; border-top: 1px solid var(--border); text-align: center; }
+  .framing h2 { margin-bottom: 24px; }
+  .framing .big { font-size: 28px; font-weight: 700; color: var(--fg); max-width: 720px; margin: 0 auto 16px; line-height: 1.3; }
+  .framing .big .accent { color: var(--accent); }
+  .framing .sub { color: var(--muted); font-size: 17px; max-width: 580px; margin: 0 auto; }
+
+  /* Footer */
+  footer { padding: 40px 0; border-top: 1px solid var(--border); color: var(--muted); font-size: 14px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 16px; }
+  footer a { color: var(--muted); text-decoration: none; }
+  footer a:hover { color: var(--fg); }
+
+  @media (max-width: 600px) {
+    .hero { padding: 60px 0 40px; }
+    h1 { font-size: 44px; }
+    .tagline { font-size: 17px; }
+  }
+</style>
+</head>
+<body>
+
+<div class="container">
+
+<nav>
+  <div class="logo">loomwork<span class="dot">.</span></div>
+  <div class="links">
+    <a href="#demo">Demo</a>
+    <a href="#beats">The 5 beats</a>
+    <a href="#install">Install</a>
+    <a href="https://github.com/loomwork/loomwork">GitHub</a>
+  </div>
+</nav>
+
+<section class="hero">
+  <div class="eyebrow">v0.1 · Open spec · Apache 2.0</div>
+  <h1>The <span class="accent">.aci</span> that makes<br>agents portable.</h1>
+  <p class="tagline">Pocketbase for agents. Single binary, local LLM, signed packaging. Point it at a folder, get answers in &lt;60 seconds. Ship the same agent to your phone, your server, your friend — it just works.</p>
+  <div class="cta-row">
+    <a class="cta cta-primary" href="#install"><code>curl -fsSL https://raw.githubusercontent.com/arunsoman/loomwork/main/go/install.sh | sh</code></a>
+    <a class="cta cta-secondary" href="#demo">Watch the 25s demo →</a>
+  </div>
+  <div class="install-cmd"><span class="prompt">$</span> loomwork doctor  <span style="color:var(--muted)"># zero config, one command to check everything</span></div>
+</section>
+
+<section class="demo" id="demo">
+  <div class="section-label">The 25-second demo</div>
+  <h2>Package on laptop. Run on phone.<br>It remembers. Hand off. Receipt.</h2>
+  <p class="sub">This clip is the launch asset. Same .aci, different device, conversation preserved, AMP handoff to a second agent, output carries a signed verification receipt.</p>
+
+  <div class="terminal">
+    <div class="terminal-head">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <div class="title">loomwork-demo — asciinema</div>
+    </div>
+    <div class="terminal-body"><span class="comment"># [1/5] On laptop: scaffold + package a research agent</span>
+<span class="prompt">$</span> loomwork init research-agent
+<span class="ok">✓</span> Created manifest.json with computed digests
+<span class="ok">✓</span> Created persona/system_prompt.md
+<span class="prompt">$</span> loomwork package --out research.aci
+<span class="ok">✓</span> Built ACI: research.aci (2312 bytes)
+<span class="ok">✓</span> Wrote SLSA attestation: research.slsa.json
+
+<span class="comment"># [2/5] On laptop: ask it something — it remembers</span>
+<span class="prompt">$</span> loomwork ask "what is ACI spec adoption?" --folder ~/research
+<span class="accent">→ agent answers, writes episode to local memory</span>
+
+<span class="comment"># [3/5] Copy .aci + memory to phone (via Termux/sync)</span>
+<span class="prompt">$</span> scp research.aci phone:~/.loomwork/
+<span class="prompt">$</span> scp ~/.loomwork/memory.db phone:~/.loomwork/
+
+<span class="comment"># [4/5] On phone: run the same .aci — it remembers</span>
+<span class="prompt">$</span> loomwork verify research.aci
+<span class="ok">✓</span> All 5 file digests verified
+<span class="ok">✓</span> Manifest signature valid
+<span class="prompt">$</span> loomwork run research.aci
+  Loaded agent: research-agent@v0.1.0 (model: llama3.2)
+<span class="accent">  Memory has: User asked about ACI spec adoption → agent cited loomwork.dev</span>
+
+<span class="comment"># [5/5] Hand off a coding task via AMP — output has a receipt</span>
+<span class="prompt">$</span> loomwork package --out coding.aci   <span class="comment"># second agent</span>
+<span class="prompt">$</span> loomwork receipt coding.aci
+  "_type":   "loomwork.dev/attestation/v0.1"
+  "subject": "coding-agent@v0.1.0"
+  "signer":  "a573114a61e1f9bd"
+  "signedAt":"2026-09-29T01:25:58Z"
+
+<span class="ok">✓ Demo complete · 25 seconds</span></div>
+  </div>
+</section>
+
+<section class="beats" id="beats">
+  <div class="section-label">The 5 beats</div>
+  <h2>What makes it convert attention into retention</h2>
+  <div class="beats-grid">
+    <div class="beat">
+      <div class="num">01 · SINGLE BINARY</div>
+      <h3>One command install</h3>
+      <p><code>curl | sh</code>. No Docker, no Node, no Python. Go binary, ~15 MB, statically linked. Cross-compiled for Linux/macOS/ARM64.</p>
+    </div>
+    <div class="beat">
+      <div class="num">02 · &lt;60 SECONDS</div>
+      <h3>First value fast</h3>
+      <p><code>loomwork init → ask → package → run</code>. Point it at a folder, it indexes and answers immediately via local Ollama.</p>
+    </div>
+    <div class="beat">
+      <div class="num">03 · LOCAL-FIRST</div>
+      <h3>No cloud by default</h3>
+      <p>Ollama on localhost. Memory in SQLite, encrypted at rest. No telemetry, no phone-home. Cloud is opt-in per command.</p>
+    </div>
+    <div class="beat">
+      <div class="num">04 · PORTABLE .aci</div>
+      <h3>Signed, verified, cross-device</h3>
+      <p>Ed25519 signature + SLSA attestation + SBOM + property tests, automatic on every <code>package</code>. Same .aci runs anywhere.</p>
+    </div>
+    <div class="beat">
+      <div class="num">05 · TYPED MEMORY</div>
+      <h3>Follows the user, not the app</h3>
+      <p>5 record kinds (preference, episode, artifact, belief, failure). Provenance, consent, retention. Revocation cascades to derivatives.</p>
+    </div>
+    <div class="beat">
+      <div class="num">06 · ZERO CONFIG</div>
+      <h3>No config nightmare</h3>
+      <p><code>loomwork doctor</code> checks every common failure mode and tells you what to do. No YAML, no env files, no debug rabbit holes.</p>
+    </div>
+  </div>
+</section>
+
+<section class="framing">
+  <div class="section-label">The positioning</div>
+  <h2>Not "the full OS on day one."</h2>
+  <p class="big">It's <span class="accent">Pocketbase for agents</span> — the .aci that makes agents portable.</p>
+  <p class="sub">Single-binary + immediate value is what converts attention into retention. The broader platform (mesh, Mission Control, formal verification) grows once the unit of packaging is adopted.</p>
+  <div style="margin-top: 36px;">
+    <a class="cta cta-primary" href="#install"><code>curl -fsSL https://raw.githubusercontent.com/arunsoman/loomwork/main/go/install.sh | sh</code></a>
+  </div>
+</section>
+
+<section id="install" style="padding: 60px 0; border-top: 1px solid var(--border);">
+  <div class="section-label">Install</div>
+  <h2>Three commands to first value</h2>
+  <div class="terminal" style="margin-top: 24px;">
+    <div class="terminal-head">
+      <div class="dot r"></div><div class="dot y"></div><div class="dot g"></div>
+      <div class="title">bash</div>
+    </div>
+    <div class="terminal-body"><span class="comment"># 1. Install (one command)</span>
+<span class="prompt">$</span> curl -fsSL https://raw.githubusercontent.com/arunsoman/loomwork/main/go/install.sh | sh
+
+<span class="comment"># 2. Make sure Ollama is running</span>
+<span class="prompt">$</span> ollama pull llama3.2
+
+<span class="comment"># 3. Check your setup</span>
+<span class="prompt">$</span> loomwork doctor
+<span class="ok">✓</span> ollama  reachable, 3 models installed
+<span class="ok">✓</span> memory  0 records, 0 embeddings
+<span class="ok">✓</span> workspace  writable
+<span class="ok">✓</span> spec  loomwork 0.1.0, spec aci.loomwork.dev/v0.1
+
+<span class="comment"># Then:</span>
+<span class="prompt">$</span> loomwork init my-agent && cd my-agent
+<span class="prompt">$</span> loomwork ask "what does this folder contain?" --folder .
+<span class="prompt">$</span> loomwork package --out my-agent.aci
+<span class="prompt">$</span> loomwork run my-agent.aci</div>
+  </div>
+</section>
+
+<footer>
+  <div>Apache 2.0 · CC-BY 4.0 (spec) · Built by the Loomwork Working Group</div>
+  <div>
+    <a href="https://github.com/loomwork/loomwork">GitHub</a> ·
+    <a href="https://loomwork.dev/spec">Spec</a> ·
+    <a href="docs/memory-contract-v0.2.md">Memory v0.2</a>
+  </div>
+</footer>
+
+</div>
+</body>
+</html>

@@ -1,0 +1,58 @@
+{
+  "apiVersion": "aci.loomwork.dev/v0.1",
+  "kind": "Agent",
+  "metadata": {
+    "name": "coding-agent",
+    "version": "v0.1.0",
+    "architecture": "amd64",
+    "os": "linux",
+    "description": "Autonomous coding agent \u2014 reads issues, writes patches, opens PRs.",
+    "license": "Apache-2.0",
+    "homepage": "https://loomwork.dev/examples/coding-agent"
+  },
+  "persona": {
+    "systemPrompt": "persona/system_prompt.md",
+    "modelPrefs": {
+      "minContextWindow": 131072,
+      "preferred": [
+        "claude-sonnet-4.5",
+        "gpt-5",
+        "deepseek-coder-v3"
+      ],
+      "fallback": [
+        "qwen2.5-coder-32b"
+      ],
+      "temperature": 0.1,
+      "tokenBudget": {
+        "perTurn": 8192,
+        "perSession": 524288,
+        "hardLimit": 4194304
+      }
+    },
+    "capabilities": {
+      "supportsStreaming": true,
+      "supportsTools": true,
+      "supportsVision": false,
+      "supportsCodeExecution": true
+    }
+  },
+  "skills": {
+    "graph": "skills/graph.json"
+  },
+  "tools": {
+    "bindings": "tools/bindings.json"
+  },
+  "memory": {
+    "schema": "memory-schema.json"
+  },
+  "sandbox": {
+    "spec": "sandbox.json"
+  },
+  "digests": {
+    "persona/system_prompt.md": "sha256:283baedd213a2bac68ec47da99e6c83bbf1fbabf405b37e30b01e752af3d1540",
+    "skills/graph.json": "sha256:a2a5c06267525e5c72ea7d6d08b35fecdffb657c86f11416b196467c2fa76745",
+    "tools/bindings.json": "sha256:e21c806c7f1a6e16d1a56631f58321af05dd1158756818eb611703bd204f45e8",
+    "memory-schema.json": "sha256:f93c23bf7fea417261958e7c60f59023acd06bc78970bc0c70bbd53dcfb3e310",
+    "sandbox.json": "sha256:743fc0435a3bd77331f403a5111f908a1693c1ff6472633da590ac53b300ebad"
+  }
+}

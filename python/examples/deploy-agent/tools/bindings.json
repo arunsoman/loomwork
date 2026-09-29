@@ -1,0 +1,22 @@
+{
+  "bindings": [
+    {
+      "name": "registry",
+      "mcpServer": "stdio:///usr/local/bin/mcp-registry",
+      "allowedTools": ["pull_artifact", "get_attestation", "get_sbom"],
+      "scope": { "registries": ["registry.loomwork.dev", "ghcr.io/loomwork"] }
+    },
+    {
+      "name": "k8s",
+      "mcpServer": "stdio:///usr/local/bin/mcp-k8s",
+      "allowedTools": ["apply", "rollout_status", "rollback"],
+      "scope": { "clusters": ["staging.loomwork.dev", "prod.loomwork.dev"] }
+    },
+    {
+      "name": "slack",
+      "mcpServer": "stdio:///usr/local/bin/mcp-slack",
+      "allowedTools": ["post_message", "listen_for_keyword"],
+      "scope": { "channels": ["#deploys"], "halt_keywords": ["halt", "stop", "rollback"] }
+    }
+  ]
+}

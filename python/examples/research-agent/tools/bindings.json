@@ -1,0 +1,22 @@
+{
+  "bindings": [
+    {
+      "name": "filesystem",
+      "mcpServer": "stdio:///usr/local/bin/mcp-fs",
+      "allowedTools": ["read_file", "write_file", "list_dir"],
+      "scope": { "paths": ["$HOME/agent-workspace/research/**"] }
+    },
+    {
+      "name": "browser",
+      "mcpServer": "ws://localhost:8765",
+      "allowedTools": ["navigate", "click", "extract_text"],
+      "scope": { "domains": ["*.wikipedia.org", "arxiv.org", "github.com", "loomwork.dev"] }
+    },
+    {
+      "name": "search",
+      "mcpServer": "stdio:///usr/local/bin/mcp-search",
+      "allowedTools": ["web_search", "image_search"],
+      "scope": { "max_results_per_query": 10 }
+    }
+  ]
+}

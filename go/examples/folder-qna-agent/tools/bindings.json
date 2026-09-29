@@ -1,0 +1,10 @@
+{
+  "bindings": [
+    {
+      "name": "filesystem",
+      "mcpServer": "stdio:///usr/local/bin/mcp-fs",
+      "allowedTools": ["read_file", "list_dir"],
+      "scope": { "paths": ["$HOME/**", "/tmp/**"] }
+    }
+  ]
+}

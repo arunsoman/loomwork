@@ -1,0 +1,12 @@
+{
+  "fs.read": ["/tmp/agent/artifacts/**", "/etc/loomwork/deploy/**"],
+  "fs.write": ["/tmp/agent/deploy/**"],
+  "net.egress": ["registry.loomwork.dev", "ghcr.io", "*.k8s.loomwork.dev", "hooks.slack.com"],
+  "net.listen": [],
+  "syscalls.allow": ["read", "write", "openat", "close", "mmap", "munmap", "brk"],
+  "syscalls.deny": ["execve", "fork", "clone", "ptrace"],
+  "resources.cpu": "1",
+  "resources.memory": "1GiB",
+  "resources.disk": "5GiB",
+  "time.maxWall": "15m"
+}
