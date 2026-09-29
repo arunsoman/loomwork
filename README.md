@@ -1,8 +1,3 @@
-**Here’s a rewritten README optimized for zero-friction install and making the credits visible in the first scroll.**
-
----
-
-```markdown
 # Loomwork
 
 **Pocketbase for agents.**  
