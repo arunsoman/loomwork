@@ -167,7 +167,9 @@ func (p *SandboxPolicy) CheckEgress(host string) error {
 
 // matchGlob matches a path or host against a pattern. "**" alone matches
 // anything; "dir/**" matches dir and everything below it; otherwise
-// filepath.Match semantics apply ("*" does not cross "/").
+// filepath.Match semantics apply ("*" does not cross "/"). Hosts contain no "/",
+// so in net.egress "*" matches any characters including dots: "*.example.com"
+// also matches "a.b.example.com".
 func matchGlob(path, pattern string) bool {
 	if pattern == "**" {
 		return true

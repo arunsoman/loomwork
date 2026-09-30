@@ -8,7 +8,22 @@ import (
 
 	"loomwork.dev/loomwork/internal/aci"
 	"loomwork.dev/loomwork/internal/memory"
+	"loomwork.dev/loomwork/internal/runtime"
 )
+
+// askOK reports whether an Ask succeeded well enough to show its answer. A
+// *MemoryWriteError still carries a valid answer, so it is shown with a warning
+// on stderr rather than dropped; any other error is a failure.
+func askOK(err error) bool {
+	if err == nil {
+		return true
+	}
+	if runtime.AsMemoryWriteError(err) {
+		fmt.Fprintf(os.Stderr, "⚠ %v\n", err)
+		return true
+	}
+	return false
+}
 
 // parseArgs parses flags that may appear before, between or after positional
 // arguments (Go's flag package stops at the first positional) and returns the

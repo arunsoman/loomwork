@@ -288,6 +288,10 @@ type ReportArtifact struct {
 	Inline string `json:"inline,omitempty"`
 }
 
+// NewID returns a unique, prefixed ID: a timestamp plus random bytes, so two
+// IDs made in the same nanosecond still differ and IDs are not guessable.
+func NewID(prefix string) string { return newID(prefix) }
+
 func newID(prefix string) string {
 	b := make([]byte, 6)
 	_, _ = rand.Read(b)

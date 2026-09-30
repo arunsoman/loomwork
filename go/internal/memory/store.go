@@ -46,6 +46,14 @@ func OpenStore(dbPath string, passphrase string) (*Store, error) {
 	if err != nil {
 		return nil, err
 	}
+	// One connection: the pragmas below then apply to every statement, and
+	// writes are serialised. busy_timeout lets a second process (the
+	// conversation store shares this file) wait instead of failing.
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	// Overwrite deleted content so revoked data does not linger in free pages.
 	if _, err := db.Exec(`PRAGMA secure_delete = ON`); err != nil {
 		db.Close()
@@ -72,7 +80,8 @@ func OpenStore(dbPath string, passphrase string) (*Store, error) {
 // PurgeExpired revokes (deletes the content of) every record whose TTL has
 // passed and returns how many were purged.
 func (s *Store) PurgeExpired() (int, error) {
-	all, err := s.Query(QueryFilter{})
+	// Tombstones (revoked/rejected) have nothing left to expire; skip them in SQL.
+	all, err := s.Query(QueryFilter{ExcludeTerminal: true})
 	if err != nil {
 		return 0, err
 	}
@@ -179,7 +188,14 @@ func (s *Store) Write(r *Record) error {
 	}
 	derivJSON, _ := json.Marshal(r.Derivatives)
 
-	_, err = s.db.Exec(
+	// The record, its derivative edges and its parents' child lists change
+	// together or not at all.
+	tx, err := s.db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	_, err = tx.Exec(
 		`INSERT OR REPLACE INTO records
                  (id, kind, status, sensitivity, payload_enc, provenance, consent, retention, derivatives, created_at, updated_at, revoked_at)
                  VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -195,18 +211,29 @@ func (s *Store) Write(r *Record) error {
 	// parent, the evidence behind a belief, and the inputs of an episode.
 	// Revoking any of them then revokes this record too.
 	for _, dep := range r.dependencies() {
-		if _, err := s.db.Exec(
+		if _, err := tx.Exec(
 			`INSERT OR REPLACE INTO derivatives (parent_id, child_id) VALUES (?, ?)`,
 			dep, r.ID,
 		); err != nil {
 			return err
 		}
-		if err := s.addToParentDerivatives(dep, r.ID); err != nil {
+		if err := addToParentDerivatives(tx, s, dep, r.ID); err != nil {
 			return err
 		}
 	}
-	return nil
+	return tx.Commit()
 }
+
+// dbq is the part of *sql.DB and *sql.Tx the store needs, so helpers can run
+// inside a transaction.
+type dbq interface {
+	Exec(query string, args ...any) (sql.Result, error)
+	QueryRow(query string, args ...any) *sql.Row
+}
+
+// Dependencies lists the record IDs this record was derived from (its parent,
+// a belief's evidence, an episode's inputs).
+func (r *Record) Dependencies() []string { return r.dependencies() }
 
 // dependencies lists the record IDs this record was derived from.
 func (r *Record) dependencies() []string {
@@ -231,8 +258,8 @@ func (r *Record) dependencies() []string {
 	return out
 }
 
-func (s *Store) addToParentDerivatives(parentID, childID string) error {
-	parent, err := s.Get(parentID)
+func addToParentDerivatives(q dbq, s *Store, parentID, childID string) error {
+	parent, err := s.getWith(q, parentID)
 	if err != nil || parent == nil || parent.Status == StatusRevoked || parent.Status == StatusRejected {
 		return nil // parent may be revoked or missing; the edge table still records it
 	}
@@ -242,19 +269,21 @@ func (s *Store) addToParentDerivatives(parentID, childID string) error {
 		}
 	}
 	parent.Derivatives = append(parent.Derivatives, childID)
-	return s.updateDerivatives(parent)
+	return updateDerivatives(q, parent)
 }
 
-func (s *Store) updateDerivatives(r *Record) error {
+func updateDerivatives(q dbq, r *Record) error {
 	derivJSON, _ := json.Marshal(r.Derivatives)
-	_, err := s.db.Exec(`UPDATE records SET derivatives = ?, updated_at = ? WHERE id = ?`,
+	_, err := q.Exec(`UPDATE records SET derivatives = ?, updated_at = ? WHERE id = ?`,
 		string(derivJSON), time.Now().UTC().Format(time.RFC3339), r.ID)
 	return err
 }
 
 // Get retrieves a single record by ID. Returns nil if not found.
-func (s *Store) Get(id string) (*Record, error) {
-	row := s.db.QueryRow(
+func (s *Store) Get(id string) (*Record, error) { return s.getWith(s.db, id) }
+
+func (s *Store) getWith(q dbq, id string) (*Record, error) {
+	row := q.QueryRow(
 		`SELECT payload_enc FROM records WHERE id = ?`, id,
 	)
 	var enc []byte
@@ -287,12 +316,15 @@ func (s *Store) Query(filter QueryFilter) ([]*Record, error) {
 		where = append(where, "status = ?")
 		args = append(args, filter.Status)
 	}
+	if filter.ExcludeTerminal {
+		where = append(where, "status NOT IN ('revoked', 'rejected')")
+	}
 	// Note: We do NOT filter by agent at the SQL level — the View does the
 	// fine-grained consent check after decrypting. SQLite's LIKE on encrypted
 	// blobs would be unreliable. We over-fetch and filter in Go.
 	q := `SELECT payload_enc FROM records WHERE ` + strings.Join(where, " AND ") + ` ORDER BY created_at DESC, rowid DESC`
 	if filter.Limit > 0 {
-		q += fmt.Sprintf(" LIMIT %d", filter.Limit)
+		q += fmt.Sprintf(" LIMIT %d OFFSET %d", filter.Limit, filter.Offset)
 	}
 	rows, err := s.db.Query(q, args...)
 	if err != nil {
@@ -303,11 +335,15 @@ func (s *Store) Query(filter QueryFilter) ([]*Record, error) {
 }
 
 // QueryFilter narrows a query.
+//
+// Agent consent is not a SQL filter: payloads are encrypted, so a View decrypts
+// and filters in Go (see View.scan, which pages with Limit/Offset).
 type QueryFilter struct {
-	Kind    Kind
-	Status  Status
-	AgentID string
-	Limit   int
+	Kind            Kind
+	Status          Status
+	ExcludeTerminal bool // skip revoked and rejected tombstones
+	Limit           int  // 0 = no limit
+	Offset          int  // used with Limit
 }
 
 func (s *Store) scanRows(rows *sql.Rows) ([]*Record, error) {

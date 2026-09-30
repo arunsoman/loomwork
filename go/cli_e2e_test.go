@@ -305,3 +305,14 @@ func TestPlainFolderFrontend(t *testing.T) {
 		t.Fatalf("run: %s%s", so, se)
 	}
 }
+
+func TestCheckAgentNameRejectsWindowsDeviceNames(t *testing.T) {
+	for _, bad := range []string{"con", "NUL", "com1", "LPT9"} {
+		if checkAgentName(bad) == nil {
+			t.Errorf("%q should be rejected", bad)
+		}
+	}
+	if err := checkAgentName("my-agent"); err != nil {
+		t.Errorf("ordinary name rejected: %v", err)
+	}
+}

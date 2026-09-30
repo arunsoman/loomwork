@@ -50,6 +50,11 @@ func cmdVerify(args []string) {
 		fmt.Printf("✗ No signature present\n")
 	}
 
+	if sigErr != nil {
+		fmt.Fprintf(os.Stderr, "\nerror: %v\n", sigErr)
+		os.Exit(1)
+	}
+
 	slsaPath := aci.SLSASidecarPath(aciPath)
 	switch slsa, err := aci.LoadSLSA(slsaPath); {
 	case err != nil:
@@ -61,10 +66,6 @@ func cmdVerify(args []string) {
 		os.Exit(1)
 	}
 
-	if sigErr != nil {
-		fmt.Fprintf(os.Stderr, "\nerror: %v\n", sigErr)
-		os.Exit(1)
-	}
 	fmt.Printf("\nACI verified: %s@%s\n", archive.Manifest.Metadata.Name, archive.Manifest.Metadata.Version)
 }
 

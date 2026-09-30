@@ -31,6 +31,9 @@ func loadAttestation(aciPath string, raw []byte, archive *aci.Archive) (att *ver
 	if att.ArchiveDigest != aci.Sha256Bytes(raw) {
 		return att, false, fmt.Errorf("attestation is for a different archive")
 	}
+	if want := archive.Manifest.Metadata.Name + "@" + archive.Manifest.Metadata.Version; att.Subject != want {
+		return att, false, fmt.Errorf("attestation subject %q does not match this agent (%s)", att.Subject, want)
+	}
 	return att, aci.DefaultTrustStore(homeDir()).IsTrusted(vk), nil
 }
 

@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode/utf8"
 
 	"loomwork.dev/loomwork/internal/aci"
 	"loomwork.dev/loomwork/internal/llm"
@@ -203,18 +204,46 @@ func (r *Runner) AskWithContext(userInput, extra string) (string, error) {
 	tokens := resp.PromptEvalCount + resp.EvalCount
 	r.sessionTokens += tokens
 
-	// Persist the turn and its token usage.
+	// Persist the turn and its token usage. A failed write is reported, not
+	// swallowed: the answer is still returned (the model call is already paid
+	// for), together with a *MemoryWriteError, because a lost turn or lost token
+	// count also weakens hardLimit enforcement.
 	aciID := r.Archive.Manifest.Metadata.Name + "@" + r.Archive.Manifest.Metadata.Version
-	_ = r.Memory.Write(&MemoryEntry{AgentID: agentID, ACI: aciID, Kind: "user_message", Content: userInput})
-	_ = r.Memory.Write(&MemoryEntry{AgentID: agentID, ACI: aciID, Kind: "assistant_response", Content: resp.Message.Content})
-	_ = r.Memory.Write(&MemoryEntry{AgentID: agentID, ACI: aciID, Kind: "token_usage", Content: fmt.Sprintf("%d", tokens)})
-
+	var writeErr error
+	for _, e := range []*MemoryEntry{
+		{AgentID: agentID, ACI: aciID, Kind: "user_message", Content: userInput},
+		{AgentID: agentID, ACI: aciID, Kind: "assistant_response", Content: resp.Message.Content},
+		{AgentID: agentID, ACI: aciID, Kind: "token_usage", Content: fmt.Sprintf("%d", tokens)},
+	} {
+		if err := r.Memory.Write(e); err != nil && writeErr == nil {
+			writeErr = fmt.Errorf("saving %s: %w", e.Kind, err)
+		}
+	}
+	if writeErr != nil {
+		return resp.Message.Content, &MemoryWriteError{Err: writeErr}
+	}
 	return resp.Message.Content, nil
+}
+
+// MemoryWriteError reports that a reply was produced but the conversation (or
+// its token usage) could not be saved. Ask returns it together with the reply.
+type MemoryWriteError struct{ Err error }
+
+func (e *MemoryWriteError) Error() string {
+	return "conversation not saved to memory: " + e.Err.Error()
+}
+func (e *MemoryWriteError) Unwrap() error { return e.Err }
+
+// AsMemoryWriteError reports whether err is a *MemoryWriteError.
+func AsMemoryWriteError(err error) bool {
+	var m *MemoryWriteError
+	return errors.As(err, &m)
 }
 
 // Limits on skill text attached to the prompt, so a large skill folder cannot
 // crowd out the conversation.
 const (
+	maxMemoryLineBytes  = 500 // one approved memory line in the prompt
 	maxSkillBytes       = 8 << 10
 	maxSkillsTotalBytes = 32 << 10
 )
@@ -289,7 +318,7 @@ func (r *Runner) typedMemorySection() string {
 				continue
 			}
 			if line := render(rec); line != "" {
-				b.WriteString("- " + line + "\n")
+				b.WriteString("- " + truncate(line, maxMemoryLineBytes) + "\n")
 			}
 		}
 	}
@@ -399,6 +428,8 @@ func (r *Runner) IndexFolder(folder string) (string, error) {
 	}
 
 	const maxFiles = 200
+	const maxEntries = 20000 // files + directories visited, so empty directories cannot stall the walk
+	entries, withheld := 0, 0
 	var listing strings.Builder
 	listing.WriteString(fmt.Sprintf("Contents of %s:\n\n", folder))
 	count := 0
@@ -414,6 +445,9 @@ func (r *Runner) IndexFolder(folder string) (string, error) {
 			}
 			return nil
 		}
+		if entries++; entries > maxEntries {
+			return filepath.SkipAll
+		}
 		rel, _ := filepath.Rel(abs, path)
 		if d.IsDir() {
 			if path != abs {
@@ -428,8 +462,14 @@ func (r *Runner) IndexFolder(folder string) (string, error) {
 		if err != nil {
 			return nil
 		}
-		listing.WriteString(fmt.Sprintf("  📄 %s (%d bytes)\n", rel, info.Size()))
 		count++
+		if secretLookingName(name) {
+			// The listing goes to the model (a cloud model, possibly): a name like
+			// passwords_backup.txt is itself sensitive, so it is counted, not shown.
+			withheld++
+		} else {
+			listing.WriteString(fmt.Sprintf("  📄 %s (%d bytes)\n", rel, info.Size()))
+		}
 		if len(samples) < 5 && sampleable(name, info.Size()) &&
 			r.Tools.Check("filesystem", "read_file", path) == nil {
 			samples = append(samples, path)
@@ -443,6 +483,12 @@ func (r *Runner) IndexFolder(folder string) (string, error) {
 		return "", err
 	}
 	listing.WriteString(fmt.Sprintf("\n(%d files listed)\n", count))
+	if withheld > 0 {
+		listing.WriteString(fmt.Sprintf("(%d files with secret-looking names not shown)\n", withheld))
+	}
+	if entries > maxEntries {
+		listing.WriteString("(folder too large; listing stopped early)\n")
+	}
 
 	if r.AllowCloudSamples || !llm.IsCloudModel(r.Model()) {
 		var out strings.Builder
@@ -483,20 +529,37 @@ func sampleable(name string, size int64) bool {
 	default:
 		return false
 	}
+	return !secretLookingName(name)
+}
+
+// secretLookingName reports whether a file name suggests credentials.
+func secretLookingName(name string) bool {
 	lower := strings.ToLower(name)
 	for _, bad := range []string{"secret", "credential", "password", "passwd", "token", "apikey", "api_key", "private", "id_rsa", "key"} {
 		if strings.Contains(lower, bad) {
-			return false
+			return true
 		}
 	}
-	return true
+	return false
 }
 
 func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return TruncateBytes(s, n) + "..."
+}
+
+// TruncateBytes returns at most n bytes of s, cut on a rune boundary so the
+// result is always valid UTF-8 (a plain s[:n] can split a multi-byte rune).
+func TruncateBytes(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	for n > 0 && !utf8.RuneStart(s[n]) {
+		n--
+	}
+	return s[:n]
 }
 
 // SaveManifestForInit writes a minimal manifest + supporting files to dir.

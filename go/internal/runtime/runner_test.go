@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"unicode/utf8"
 
 	"loomwork.dev/loomwork/internal/aci"
 	"loomwork.dev/loomwork/internal/llm"
@@ -336,5 +337,57 @@ func TestFolderAgentRunsWithMarkdownSkills(t *testing.T) {
 	}
 	if strings.Contains(sys, "name: review") {
 		t.Log("note: front-matter is passed through with the skill text")
+	}
+}
+
+func TestTruncateBytesKeepsValidUTF8(t *testing.T) {
+	s := "日本語日本語" // 3 bytes per rune
+	for n := 0; n <= len(s)+1; n++ {
+		got := TruncateBytes(s, n)
+		if !utf8.ValidString(got) || len(got) > n {
+			t.Fatalf("TruncateBytes(%d) = %q (valid=%v, len=%d)", n, got, utf8.ValidString(got), len(got))
+		}
+	}
+	if got := truncate(s, 4); !utf8.ValidString(got) || got != "日..." {
+		t.Fatalf("truncate = %q", got)
+	}
+}
+
+// A failed memory write must be reported, with the answer still returned.
+func TestAskReportsMemoryWriteFailure(t *testing.T) {
+	r, _ := testRunner(t, newFakeOllama("llama3.2"), nil)
+	if _, err := r.Ask("first"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Memory.db.Exec(`DROP TABLE episodic`); err != nil {
+		t.Fatal(err)
+	}
+	ans, err := r.Ask("second")
+	if !AsMemoryWriteError(err) {
+		t.Fatalf("want a MemoryWriteError, got %v", err)
+	}
+	if ans != "ok" {
+		t.Fatalf("the answer must still be returned, got %q", ans)
+	}
+}
+
+func TestIndexFolderWithholdsSecretLookingNames(t *testing.T) {
+	r, home := testRunner(t, newFakeOllama("llama3.2"), func(dir string) {
+		rewrite(t, dir, "tools/bindings.json", `{"bindings":[{"name":"filesystem","mcpServer":"stdio:///x","allowedTools":["read_file","list_dir"],"scope":{"paths":["**"]}}]}`)
+		rewrite(t, dir, "sandbox.json", `{"fs.read":["**"],"fs.write":[],"net.egress":["127.0.0.1","localhost"],"net.listen":[],"resources.cpu":"1","resources.memory":"1GiB","time.maxWall":"10m"}`)
+	})
+	folder := filepath.Join(home, "docs")
+	os.MkdirAll(folder, 0o755)
+	os.WriteFile(filepath.Join(folder, "passwords_backup.txt"), []byte("x"), 0o644)
+	os.WriteFile(filepath.Join(folder, "notes.txt"), []byte("hi"), 0o644)
+	listing, err := r.IndexFolder(folder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(listing, "passwords_backup") {
+		t.Fatalf("secret-looking file name leaked into the listing:\n%s", listing)
+	}
+	if !strings.Contains(listing, "notes.txt") || !strings.Contains(listing, "1 files with secret-looking names not shown") {
+		t.Fatalf("unexpected listing:\n%s", listing)
 	}
 }

@@ -697,3 +697,92 @@ func TestPendingCountReportsErrors(t *testing.T) {
 		t.Fatal("expected an error from a closed store")
 	}
 }
+
+// A derivative chain far deeper than a recursive walk could survive.
+func TestRevokeDeepChainIsIterative(t *testing.T) {
+	s := openTestStore(t)
+	rev := NewReviewerView(s)
+	root := NewRecord(KindArtifact, SensLow, Provenance{WriterAgentID: "user"})
+	root.Artifact = &Artifact{Name: "root", Mime: "text/plain", Digest: "sha256:x", CreatedBy: "user"}
+	if err := s.Write(root); err != nil {
+		t.Fatal(err)
+	}
+	parent, last := root.ID, root.ID
+	const depth = 3000
+	for i := 0; i < depth; i++ {
+		c := NewRecord(KindEpisode, SensLow, Provenance{WriterAgentID: "user", ParentID: parent})
+		c.Episode = &Episode{Summary: "step"}
+		if err := s.Write(c); err != nil {
+			t.Fatal(err)
+		}
+		parent, last = c.ID, c.ID
+	}
+	res, err := rev.Revoke(root.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(res.RevokedRecords) != depth+1 || res.Depth != depth {
+		t.Fatalf("revoked %d records, depth %d; want %d, %d", len(res.RevokedRecords), res.Depth, depth+1, depth)
+	}
+	if got, _ := s.Get(last); got.Status != StatusRevoked || got.Episode != nil {
+		t.Fatal("deepest record should be a tombstone")
+	}
+}
+
+// Revoking an ID that was never written must fail, not revoke whatever cited it.
+func TestRevokeUnknownIDDoesNotCascade(t *testing.T) {
+	s := openTestStore(t)
+	rev := NewReviewerView(s)
+	b := NewRecord(KindBelief, SensLow, Provenance{WriterAgentID: "user"})
+	b.Belief = &Belief{Claim: "cites a ghost", Evidence: []string{"mem_ghost"}, Confidence: 0.5}
+	if err := s.Write(b); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rev.Revoke("mem_ghost"); err == nil {
+		t.Fatal("revoking an unknown ID should be an error")
+	}
+	if got, _ := s.Get(b.ID); got.Status == StatusRevoked || got.Belief == nil {
+		t.Fatal("the belief citing the unknown ID must be untouched")
+	}
+}
+
+// The visible records are all older than a full page of other writers'
+// records; List and Search must page through, not stop at the first page.
+func TestViewPagesPastInvisibleRecords(t *testing.T) {
+	s := openTestStore(t)
+	mine := NewViewOpts(s, "me", nil, Options{})
+	first := prefRecord("needle-key")
+	if err := mine.Propose(first); err != nil {
+		t.Fatal(err)
+	}
+	other := NewViewOpts(s, "other", nil, Options{})
+	for i := 0; i < scanPage+50; i++ {
+		if err := other.Propose(prefRecord("hay")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	got, err := mine.List(KindPreference, 5)
+	if err != nil || len(got) != 1 || got[0].ID != first.ID {
+		t.Fatalf("List = %d records, %v; want my 1", len(got), err)
+	}
+	hits, _ := mine.Search("needle-key", 5)
+	if len(hits) != 1 {
+		t.Fatalf("Search found %d, want 1", len(hits))
+	}
+}
+
+// A write that fails part-way (here, a dependency insert) must leave no record.
+func TestWriteIsAtomic(t *testing.T) {
+	s := openTestStore(t)
+	if _, err := s.db.Exec(`DROP TABLE derivatives`); err != nil {
+		t.Fatal(err)
+	}
+	r := NewRecord(KindEpisode, SensLow, Provenance{WriterAgentID: "user", ParentID: "mem_parent"})
+	r.Episode = &Episode{Summary: "x"}
+	if err := s.Write(r); err == nil {
+		t.Fatal("expected the write to fail without a derivatives table")
+	}
+	if got, _ := s.Get(r.ID); got != nil {
+		t.Fatal("a failed write must not leave the record behind")
+	}
+}

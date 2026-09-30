@@ -139,6 +139,9 @@ func (m *Manifest) Validate() error {
 		m.Memory.Schema,
 		m.Sandbox.Spec,
 	}
+	if m.Persona.FewShot != "" {
+		required = append(required, m.Persona.FewShot)
+	}
 	for _, path := range required {
 		if path == "" {
 			return fmt.Errorf("manifest is missing a required file reference")

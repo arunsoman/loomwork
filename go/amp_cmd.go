@@ -59,7 +59,7 @@ func ampToken(args []string) {
 	sk := loadOrCreateKey(defaultKeyPath())
 	now := time.Now().UTC()
 	tok := &amp.CapabilityToken{
-		ID:        fmt.Sprintf("cap_%d", now.UnixNano()),
+		ID:        amp.NewID("cap"),
 		Skill:     *skill,
 		IssuedAt:  now.Format(time.RFC3339),
 		ExpiresAt: now.Add(*ttl).Format(time.RFC3339),
@@ -144,7 +144,13 @@ func ampServe(args []string) {
 				b, _ := json.Marshal(spec.Inputs)
 				q += "\n\nInputs: " + string(b)
 			}
-			return runner.Ask(q)
+			out, err := runner.Ask(q)
+			if runtime.AsMemoryWriteError(err) {
+				// The task ran; the answer is good. Say the local log failed.
+				fmt.Fprintf(os.Stderr, "amp: warning: %v\n", err)
+				return out, nil
+			}
+			return out, err
 		},
 	}
 	fmt.Fprintf(os.Stderr, "amp: serving %s@%s (skills: %s; %d trusted keys)\n",
@@ -197,7 +203,7 @@ func ampDelegate(args []string) {
 	client := amp.NewClient(tr)
 	client.SetTimeout(*timeout)
 
-	taskID := fmt.Sprintf("task_%d", time.Now().UnixNano())
+	taskID := amp.NewID("task")
 	res, err := client.Delegate(&amp.DelegateParams{
 		TaskID: taskID,
 		Spec:   amp.DelegateSpec{Skill: *skill, Intent: intent, Inputs: map[string]any{}},

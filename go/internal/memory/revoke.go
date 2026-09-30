@@ -21,9 +21,16 @@ type RevocationResult struct {
 // database overwrites freed pages (secure_delete). It cannot be undone; to
 // bring a fact back, propose it again.
 func (s *Store) Revoke(recordID string) (*RevocationResult, error) {
+	// An unknown ID is an error, not a cascade: edges may still name it (a
+	// belief can cite an ID that was never written), and revoking a typo must
+	// not revoke unrelated records.
+	if r, err := s.Get(recordID); err != nil {
+		return nil, err
+	} else if r == nil {
+		return nil, fmt.Errorf("record not found: %s", recordID)
+	}
 	result := &RevocationResult{}
-	visited := map[string]bool{}
-	if err := s.revokeCascade(recordID, StatusRevoked, result, visited, 0); err != nil {
+	if err := s.revokeCascade(recordID, StatusRevoked, result); err != nil {
 		return nil, err
 	}
 	return result, nil
@@ -64,41 +71,55 @@ func (s *Store) tombstone(r *Record, status Status) error {
 	return nil
 }
 
-func (s *Store) revokeCascade(recordID string, status Status, result *RevocationResult, visited map[string]bool, depth int) error {
-	if visited[recordID] {
-		return nil // cycle guard
+// revokeCascade walks the derivatives graph with an explicit worklist rather
+// than recursion, so a very deep graph cannot overflow the stack. The visited
+// set bounds the walk (each record is handled once, cycles included).
+func (s *Store) revokeCascade(rootID string, status Status, result *RevocationResult) error {
+	type item struct {
+		id    string
+		depth int
 	}
-	visited[recordID] = true
-	if depth > result.Depth {
-		result.Depth = depth
-	}
+	visited := map[string]bool{}
+	stack := []item{{rootID, 0}}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if visited[cur.id] {
+			continue
+		}
+		visited[cur.id] = true
+		if cur.depth > result.Depth {
+			result.Depth = cur.depth
+		}
 
-	r, err := s.Get(recordID)
-	if err != nil {
-		return err
-	}
-	if r != nil && r.Status != StatusRevoked && r.Status != StatusRejected {
-		if err := s.tombstone(r, status); err != nil {
+		r, err := s.Get(cur.id)
+		if err != nil {
 			return err
 		}
-		result.RevokedRecords = append(result.RevokedRecords, recordID)
-	}
-	// Even for a missing or already revoked record, make sure no embedding is left.
-	deleted, err := s.DeleteEmbedding(recordID)
-	if err != nil {
-		return fmt.Errorf("delete embedding %s: %w", recordID, err)
-	}
-	if deleted {
-		result.DeletedEmbeddings++
-	}
-
-	children, err := s.GetChildren(recordID)
-	if err != nil {
-		return err
-	}
-	for _, child := range children {
-		if err := s.revokeCascade(child, StatusRevoked, result, visited, depth+1); err != nil {
+		st := StatusRevoked
+		if cur.id == rootID {
+			st = status
+		}
+		if r != nil && r.Status != StatusRevoked && r.Status != StatusRejected {
+			if err := s.tombstone(r, st); err != nil {
+				return err
+			}
+			result.RevokedRecords = append(result.RevokedRecords, cur.id)
+		}
+		// Even for a missing or already revoked record, make sure no embedding is left.
+		deleted, err := s.DeleteEmbedding(cur.id)
+		if err != nil {
+			return fmt.Errorf("delete embedding %s: %w", cur.id, err)
+		}
+		if deleted {
+			result.DeletedEmbeddings++
+		}
+		children, err := s.GetChildren(cur.id)
+		if err != nil {
 			return err
+		}
+		for _, c := range children {
+			stack = append(stack, item{c, cur.depth + 1})
 		}
 	}
 	return nil

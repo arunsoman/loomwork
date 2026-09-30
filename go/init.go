@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"loomwork.dev/loomwork/internal/runtime"
 )
@@ -26,6 +27,11 @@ func cmdInit(args []string) {
 	dir := "."
 	if len(pos) > 0 {
 		dir = pos[0]
+	}
+	if abs, err := filepath.Abs(dir); err == nil {
+		if err := checkAgentName(filepath.Base(abs)); err != nil {
+			fail(err)
+		}
 	}
 	if _, err := os.Stat(filepath.Join(dir, "manifest.json")); err == nil && !*force {
 		fail(fmt.Errorf("%s already contains an agent (manifest.json); use --force to overwrite it", dir))
@@ -58,4 +64,17 @@ func cmdInit(args []string) {
 	fmt.Printf("  cd %s && loomwork ask \"what does this folder contain?\" --folder .\n", dir)
 	fmt.Printf("Then package it:\n")
 	fmt.Printf("  loomwork package --out %s.aci\n", name)
+}
+
+// checkAgentName rejects directory names that cannot be a portable agent name:
+// the name becomes metadata.name, and a name that is a reserved device name on
+// Windows (CON, NUL, COM1, ...) cannot be created as a file or folder there.
+func checkAgentName(name string) error {
+	switch strings.ToLower(name) {
+	case "con", "prn", "aux", "nul",
+		"com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9",
+		"lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9":
+		return fmt.Errorf("%q is a reserved device name on Windows; pick another directory name for the agent", name)
+	}
+	return nil
 }

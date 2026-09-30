@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"loomwork.dev/loomwork/internal/memory"
+	"loomwork.dev/loomwork/internal/runtime"
 )
 
 // cmdMemory is the typed-memory CLI.
@@ -58,7 +59,7 @@ Record statuses: pending, active, superseded, revoked
 		status := fs.String("status", "", "filter by status")
 		limit := fs.Int("limit", 20, "max records")
 		parseArgs(fs, rest)
-		records, err := view.List(memory.Kind(*kind), 1<<30)
+		records, err := view.ListStatus(memory.Kind(*kind), memory.Status(*status), *limit)
 		if err != nil {
 			fail(err)
 		}
@@ -70,9 +71,6 @@ Record statuses: pending, active, superseded, revoked
 		}
 		shown := 0
 		for _, r := range records {
-			if *status != "" && string(r.Status) != *status {
-				continue
-			}
 			if shown >= *limit {
 				break
 			}
@@ -126,6 +124,13 @@ Record statuses: pending, active, superseded, revoked
 		r.Consent.Public = *public
 		if *ttl > 0 {
 			r.Retention = memory.Retention{Mode: "ttl", TTLSeconds: *ttl}
+		}
+		for _, depID := range r.Dependencies() {
+			if dep, err := store.Get(depID); err != nil {
+				fail(err)
+			} else if dep == nil {
+				fail(fmt.Errorf("unknown record ID %q in --parent/--evidence/inputs; propose it first", depID))
+			}
 		}
 		writer := view
 		if *asAgent != "" {
@@ -320,7 +325,7 @@ func truncateStr(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "..."
+	return runtime.TruncateBytes(s, n) + "..."
 }
 
 func containsString(list []string, s string) bool {

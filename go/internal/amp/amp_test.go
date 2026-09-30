@@ -179,3 +179,14 @@ func TestReceiptSignatures(t *testing.T) {
 	}
 	_ = bytes.Buffer{}
 }
+
+func TestNewIDIsUnique(t *testing.T) {
+	seen := map[string]bool{}
+	for i := 0; i < 1000; i++ {
+		id := NewID("cap")
+		if seen[id] {
+			t.Fatalf("duplicate ID %s", id)
+		}
+		seen[id] = true
+	}
+}

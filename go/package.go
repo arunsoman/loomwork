@@ -151,6 +151,10 @@ func recomputeDigests(sourceDir string) (*aci.Manifest, error) {
 			return nil, fmt.Errorf("manifest is missing a required file reference")
 		}
 	}
+	if manifest.Persona.FewShot != "" {
+		// Optional persona file: digest it (and so pack and sign it) when declared.
+		paths = append(paths, manifest.Persona.FewShot)
+	}
 	// Skill implementation files are part of the agent and must be covered too.
 	if graphData, err := os.ReadFile(filepath.Join(sourceDir, manifest.Skills.Graph)); err == nil {
 		var g aci.SkillsGraph

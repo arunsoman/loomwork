@@ -103,6 +103,8 @@ func (t *TrustStore) List() ([]*VerifyingKey, error) {
 		}
 		vk, err := LoadVerifyingKeyPEM(filepath.Join(t.Dir, e.Name()))
 		if err != nil {
+			// A corrupt key file silently shrinks the trusted set; say so.
+			fmt.Fprintf(os.Stderr, "⚠ trust store: ignoring unreadable key %s: %v\n", filepath.Join(t.Dir, e.Name()), err)
 			continue
 		}
 		out = append(out, vk)

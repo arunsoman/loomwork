@@ -334,12 +334,18 @@ func (s *Server) handleDelegate(env *Envelope) {
 
 	p.Spec.Skill = skill
 	out, err := s.Handler(p.Spec)
-	resp, _ := NewResponse(env.ID, DelegateResult{Accepted: err == nil, Reason: errString(err)}, env.AMP.TraceID)
+	resp, respErr := NewResponse(env.ID, DelegateResult{Accepted: err == nil, Reason: errString(err)}, env.AMP.TraceID)
+	if respErr != nil {
+		s.deny(env, CodeProtocolViolation, "could not build response: "+respErr.Error())
+		return
+	}
 	if err := s.Transport.Send(resp); err != nil {
 		return
 	}
 
-	// Report the outcome back to the caller and wait for the acknowledgement.
+	// Report the outcome back to the caller. Delivery is fire-and-forget in
+	// v0.1: the caller's acknowledgement arrives as an ordinary response
+	// message, which Serve ignores.
 	rp := ReportParams{TaskID: p.TaskID, Status: "complete"}
 	if err != nil {
 		rp.Status, rp.Error = "failed", err.Error()

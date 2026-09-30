@@ -93,7 +93,7 @@ func cmdRun(args []string) {
 
 	if *input != "" {
 		answer, err := runner.Ask(*input)
-		if err != nil {
+		if !askOK(err) {
 			fail(err)
 		}
 		fmt.Println(answer)
@@ -115,7 +115,7 @@ func cmdRun(args []string) {
 			continue
 		}
 		answer, err := runner.Ask(line)
-		if err != nil {
+		if !askOK(err) {
 			fmt.Fprintf(os.Stderr, "error: %v\n", err)
 			continue
 		}

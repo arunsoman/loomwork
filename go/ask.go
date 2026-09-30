@@ -75,7 +75,7 @@ func cmdAsk(args []string) {
 	}
 
 	answer, err := runner.AskWithContext(question, extra)
-	if err != nil {
+	if !askOK(err) {
 		fail(err)
 	}
 	fmt.Println(answer)
@@ -94,5 +94,5 @@ func truncate(s string, n int) string {
 	if len(s) <= n {
 		return s
 	}
-	return s[:n] + "\n... (truncated)"
+	return runtime.TruncateBytes(s, n) + "\n... (truncated)"
 }

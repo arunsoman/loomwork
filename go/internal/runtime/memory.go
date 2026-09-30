@@ -55,6 +55,13 @@ func OpenMemory(dbPath string, passphrase string) (*Memory, error) {
 	if err != nil {
 		return nil, err
 	}
+	// One connection (so the pragmas apply to every statement) and a busy
+	// timeout, because the typed store opens this same file.
+	db.SetMaxOpenConns(1)
+	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
+		db.Close()
+		return nil, err
+	}
 	// Overwrite deleted content so it does not linger in free pages.
 	if _, err := db.Exec(`PRAGMA secure_delete = ON`); err != nil {
 		db.Close()
@@ -130,19 +137,31 @@ func (m *Memory) Write(entry *MemoryEntry) error {
 	if err != nil {
 		return err
 	}
-	_, err = m.db.Exec(
-		`INSERT OR REPLACE INTO entries (entry_id, agent_id, aci, kind, content_enc, metadata, timestamp)
-		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		entry.ID, entry.AgentID, entry.ACI, entry.Kind, enc, "{}", entry.Timestamp,
-	)
+	// The entry and its timeline row are written together. A rewritten entry
+	// (same ID, e.g. a re-indexed folder) replaces its timeline row instead of
+	// adding a stale duplicate.
+	tx, err := m.db.Begin()
 	if err != nil {
 		return err
 	}
-	_, err = m.db.Exec(
+	defer tx.Rollback()
+	if _, err = tx.Exec(
+		`INSERT OR REPLACE INTO entries (entry_id, agent_id, aci, kind, content_enc, metadata, timestamp)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		entry.ID, entry.AgentID, entry.ACI, entry.Kind, enc, "{}", entry.Timestamp,
+	); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(`DELETE FROM episodic WHERE entry_id = ?`, entry.ID); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(
 		`INSERT INTO episodic (ts, event, entry_id, agent_id) VALUES (?, ?, ?, ?)`,
 		entry.Timestamp, entry.Kind+":"+entry.ID, entry.ID, entry.AgentID,
-	)
-	return err
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // QueryByAgent returns the most recent entries for an agent.
@@ -212,7 +231,7 @@ func (m *Memory) QueryByKind(kind string, limit int) ([]*MemoryEntry, error) {
 	}
 	rows, err := m.db.Query(
 		`SELECT entry_id, agent_id, aci, kind, content_enc, timestamp
-		 FROM entries WHERE kind = ? ORDER BY timestamp DESC LIMIT ?`,
+		 FROM entries WHERE kind = ? ORDER BY timestamp DESC, rowid DESC LIMIT ?`,
 		kind, limit,
 	)
 	if err != nil {

@@ -50,39 +50,66 @@ func NewReviewerView(store *Store) *View {
 	return &View{store: store, agentID: "user", scopes: []string{"reviewer"}, canApprove: true}
 }
 
+// scanPage is how many rows scan fetches (and decrypts) at a time.
+const scanPage = 200
+
+// scan walks the store a page at a time and calls keep for every record this
+// view may see, stopping once limit records have been kept. Consent is checked
+// after decryption, so paging (rather than one unbounded query) is what keeps a
+// large store from being loaded whole to return the first few records. A
+// reviewer view also walks staged (write-gated) proposals.
+func (v *View) scan(kind Kind, limit int, keep func(*Record) bool) ([]*Record, error) {
+	var out []*Record
+	for offset := 0; ; offset += scanPage {
+		page, err := v.store.Query(QueryFilter{Kind: kind, Limit: scanPage, Offset: offset})
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range page {
+			if v.sees(r) && keep(r) {
+				out = append(out, r)
+				if len(out) >= limit {
+					return out, nil
+				}
+			}
+		}
+		if len(page) < scanPage {
+			break
+		}
+	}
+	if v.canApprove {
+		staged, err := v.store.ListProposals("")
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range staged {
+			if (kind == "" || r.Kind == kind) && v.sees(r) && keep(r) {
+				out = append(out, r)
+				if len(out) >= limit {
+					return out, nil
+				}
+			}
+		}
+	}
+	return out, nil
+}
+
 // List returns records of a kind (all kinds if empty) visible to this view,
 // newest first, up to limit (default 20).
 func (v *View) List(kind Kind, limit int) ([]*Record, error) {
 	if limit <= 0 {
 		limit = 20
 	}
-	records, err := v.store.Query(QueryFilter{Kind: kind})
-	if err != nil {
-		return nil, err
+	return v.scan(kind, limit, func(*Record) bool { return true })
+}
+
+// ListStatus is List restricted to one status (all statuses if empty), applied
+// before the limit so a filtered listing is not cut short by other records.
+func (v *View) ListStatus(kind Kind, status Status, limit int) ([]*Record, error) {
+	if limit <= 0 {
+		limit = 20
 	}
-	if v.canApprove {
-		// A reviewer also sees proposals staged by write-gated writers.
-		staged, err := v.store.ListProposals("")
-		if err != nil {
-			return nil, err
-		}
-		for _, r := range staged {
-			if kind == "" || r.Kind == kind {
-				records = append(records, r)
-			}
-		}
-	}
-	var out []*Record
-	for _, r := range records {
-		if !v.sees(r) {
-			continue
-		}
-		out = append(out, r)
-		if len(out) >= limit {
-			break
-		}
-	}
-	return out, nil
+	return v.scan(kind, limit, func(r *Record) bool { return status == "" || r.Status == status })
 }
 
 // Get returns a single record if visible to this view.
@@ -204,24 +231,10 @@ func (v *View) Search(query string, limit int) ([]*Record, error) {
 	if limit <= 0 {
 		limit = 10
 	}
-	all, err := v.store.Query(QueryFilter{})
-	if err != nil {
-		return nil, err
-	}
 	q := strings.ToLower(query)
-	var out []*Record
-	for _, r := range all {
-		if !v.sees(r) {
-			continue
-		}
-		if strings.Contains(strings.ToLower(r.contentString()), q) {
-			out = append(out, r)
-			if len(out) >= limit {
-				break
-			}
-		}
-	}
-	return out, nil
+	return v.scan("", limit, func(r *Record) bool {
+		return strings.Contains(strings.ToLower(r.contentString()), q)
+	})
 }
 
 // contentString returns the searchable text of a record's typed payload.

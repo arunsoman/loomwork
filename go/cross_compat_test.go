@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -16,7 +17,7 @@ import (
 func TestCrossCompatWithPython(t *testing.T) {
 	pySrc := os.Getenv("LOOMWORK_PYTHON_SRC")
 	if pySrc == "" {
-		pySrc = "/home/z/my-project/loomwork-src"
+		pySrc = "../python" // the Python implementation lives next to go/ in this repo
 	}
 	if _, err := os.Stat(filepath.Join(pySrc, "loomwork", "aci", "archive.py")); err != nil {
 		t.Skipf("Python impl not found at %s (set LOOMWORK_PYTHON_SRC)", pySrc)
@@ -62,6 +63,12 @@ with tempfile.TemporaryDirectory() as tmp:
 	cmd = exec.Command("python3", "-c", pyScript, dir+"/test-agent/test.aci")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		// A missing Python dependency is an environment gap, not a
+		// compatibility bug: skip locally, but fail in CI so this test can
+		// never be silently skipped there.
+		if strings.Contains(string(out), "ModuleNotFoundError") && os.Getenv("CI") == "" {
+			t.Skipf("Python dependencies not installed (pip install -e ../python): %s", out)
+		}
 		t.Fatalf("Python failed to load Go ACI: %v\n%s", err, out)
 	}
 	t.Logf("Python output:\n%s", out)
