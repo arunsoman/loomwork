@@ -28,7 +28,7 @@ func cmdMemory(args []string) {
 Usage:
   loomwork memory list [--kind K] [--status S]   List records (filtered)
   loomwork memory get <id>                        Show one record
-  loomwork memory propose --kind K --json '{...}' [--allow-agent a,b] [--public] [--ttl secs]
+  loomwork memory propose --kind K --json '{...}' [--allow-agent a,b] [--public] [--ttl secs] [--as-agent name]
                                                   Propose a new record (pending)
   loomwork memory approve <id>                    Approve a pending record
   loomwork memory reject <id>                     Reject a pending record
@@ -62,6 +62,12 @@ Record statuses: pending, active, superseded, revoked
 		if err != nil {
 			fail(err)
 		}
+		staged := map[string]bool{}
+		if ids, err := store.StagedIDs(); err == nil {
+			for _, id := range ids {
+				staged[id] = true
+			}
+		}
 		shown := 0
 		for _, r := range records {
 			if *status != "" && string(r.Status) != *status {
@@ -72,7 +78,11 @@ Record statuses: pending, active, superseded, revoked
 			}
 			shown++
 			preview := recordPreview(r)
-			fmt.Printf("  %s  [%s]  %s  %s\n", r.ID, r.Kind, r.Status, preview)
+			label := string(r.Status)
+			if staged[r.ID] {
+				label += " (staged)"
+			}
+			fmt.Printf("  %s  [%s]  %s  %s\n", r.ID, r.Kind, label, preview)
 		}
 	case "get":
 		if len(rest) < 1 {
@@ -98,6 +108,7 @@ Record statuses: pending, active, superseded, revoked
 		scopes := fs.String("allow-scope", "", "comma-separated scopes allowed to read this record")
 		public := fs.Bool("public", false, "any agent may read this record")
 		ttl := fs.Int64("ttl", 0, "delete the record after this many seconds (default: keep until revoked)")
+		asAgent := fs.String("as-agent", "", "propose as this agent (subject to the pending cap, pending TTL and write-gate) instead of as the reviewer")
 		parseArgs(fs, rest)
 		if *kind == "" || *payloadJSON == "" {
 			fail(fmt.Errorf("--kind and --json are required"))
@@ -116,10 +127,22 @@ Record statuses: pending, active, superseded, revoked
 		if *ttl > 0 {
 			r.Retention = memory.Retention{Mode: "ttl", TTLSeconds: *ttl}
 		}
-		if err := view.Propose(r); err != nil {
+		writer := view
+		if *asAgent != "" {
+			writer = memory.NewView(store, *asAgent, nil)
+			// The writer can always read its own record; keep any --allow-agent recipients.
+			if !containsString(r.Consent.AllowedAgents, *asAgent) {
+				r.Consent.AllowedAgents = append(r.Consent.AllowedAgents, *asAgent)
+			}
+		}
+		if err := writer.Propose(r); err != nil {
 			fail(err)
 		}
-		fmt.Printf("✓ Proposed %s (id: %s, status: pending)\n", *kind, r.ID)
+		where := "status: pending"
+		if *asAgent != "" && memory.WriteGateFromEnv() {
+			where = "staged in the proposals table (write-gate), outside the record store"
+		}
+		fmt.Printf("✓ Proposed %s (id: %s, %s)\n", *kind, r.ID, where)
 		fmt.Printf("  Approve with: loomwork memory approve %s\n", r.ID)
 	case "approve":
 		if len(rest) < 1 {
@@ -170,6 +193,7 @@ Record statuses: pending, active, superseded, revoked
 		}
 		fmt.Printf("Total records: %d\n", stats.Total)
 		fmt.Printf("Embeddings:    %d\n", stats.Embeddings)
+		fmt.Printf("Staged:        %d  (write-gate proposals awaiting review; see `loomwork memory list --status pending`)\n", stats.Staged)
 		fmt.Println("\nBy kind:")
 		for k, n := range stats.ByKind {
 			fmt.Printf("  %s: %d\n", k, n)
@@ -297,4 +321,13 @@ func truncateStr(s string, n int) string {
 		return s
 	}
 	return s[:n] + "..."
+}
+
+func containsString(list []string, s string) bool {
+	for _, x := range list {
+		if x == s {
+			return true
+		}
+	}
+	return false
 }

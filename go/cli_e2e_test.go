@@ -235,3 +235,73 @@ func rewriteTar(t *testing.T, raw []byte, fn func(name string, data []byte) ([]b
 	gz.Close()
 	return buf.Bytes()
 }
+
+// A plain folder (AGENT.md, skills/*.md, MEMORY.md) goes through init, package
+// and verify without hand-writing any JSON, and the user's files stay as written.
+func TestPlainFolderFrontend(t *testing.T) {
+	bin := filepath.Join(t.TempDir(), "loomwork")
+	if out, err := exec.Command("go", "build", "-o", bin, ".").CombinedOutput(); err != nil {
+		t.Fatalf("build: %v\n%s", err, out)
+	}
+	srv := fakeOllamaServer()
+	defer srv.Close()
+	e := newCLIEnv(t, bin, srv.URL)
+	dir := filepath.Join(e.home, "notes-agent")
+	os.MkdirAll(filepath.Join(dir, "skills"), 0o755)
+	agent := "# Notes agent\n\nYou summarise notes.\n"
+	skill := "---\nname: summarise\ndescription: Summarise a note\n---\nSteps...\n"
+	os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte(agent), 0o644)
+	os.WriteFile(filepath.Join(dir, "skills", "summarise.md"), []byte(skill), 0o644)
+	os.WriteFile(filepath.Join(dir, "skills", "tag.md"), []byte("Tag a note.\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "MEMORY.md"), []byte("# Memory\n- prefers short notes\n"), 0o644)
+
+	if so, se, code := e.run(dir, "", "package", "--out", "notes.aci"); code != 0 {
+		t.Fatalf("package: %s%s", so, se)
+	}
+	if so, se, code := e.run(dir, "", "verify", "notes.aci"); code != 0 {
+		t.Fatalf("verify: %s%s", so, se)
+	}
+	if b, _ := os.ReadFile(filepath.Join(dir, "AGENT.md")); string(b) != agent {
+		t.Fatal("AGENT.md must not be rewritten")
+	}
+	raw, _ := os.ReadFile(filepath.Join(dir, "notes.aci"))
+	names := map[string]bool{}
+	tr := tar.NewReader(bytes.NewReader(gunzip(t, raw)))
+	for {
+		h, err := tr.Next()
+		if err != nil {
+			break
+		}
+		names[h.Name] = true
+	}
+	if names["MEMORY.md"] {
+		t.Error("MEMORY.md is memory content and must not be packed into the ACI (PRD §8.3)")
+	}
+	for _, want := range []string{"AGENT.md", "skills/summarise.md", "skills/tag.md", "manifest.json"} {
+		if !names[want] {
+			t.Errorf("archive is missing %s (have %v)", want, names)
+		}
+	}
+	// Re-packaging must pick up a skill added after the first package, not drop it.
+	os.WriteFile(filepath.Join(dir, "skills", "review.md"), []byte("Review a note.\n"), 0o644)
+	if so, se, code := e.run(dir, "", "package", "--out", "notes2.aci"); code != 0 {
+		t.Fatalf("re-package: %s%s", so, se)
+	}
+	raw2, _ := os.ReadFile(filepath.Join(dir, "notes2.aci"))
+	found := false
+	tr2 := tar.NewReader(bytes.NewReader(gunzip(t, raw2)))
+	for {
+		h, err := tr2.Next()
+		if err != nil {
+			break
+		}
+		found = found || h.Name == "skills/review.md"
+	}
+	if !found {
+		t.Error("skill added after init was silently dropped on re-package")
+	}
+	so, se, code := e.run(dir, "", "run", "--input", "ping", "notes.aci")
+	if code != 0 || !strings.Contains(so, "pong") {
+		t.Fatalf("run: %s%s", so, se)
+	}
+}

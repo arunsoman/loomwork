@@ -2,6 +2,12 @@
 
 > Typed records, provenance, consent, retention, and revocation cascade.
 
+## Two layers
+
+- **Conversational entries** are the raw log: auto-persisted by the runtime, never approved, replayed only as recent chat turns to the same agent.
+- **Typed records** are the trusted layer: only `active` records reach an agent's prompt.
+- **Pending** is persisted but untrusted: visible only to its writer and the reviewer, never in another agent's view or prompt.
+
 ## Design principles
 
 1. **Raw memories live in a user-controlled store.** Agents never read it directly; they read through a filtered View adapter.
@@ -79,7 +85,7 @@
                        (terminal)
 ```
 
-- **pending**: Proposed by an agent, awaiting review. Visible only to the writer.
+- **pending**: Proposed by an agent, awaiting review. Visible only to the writer and the reviewer. An agent's pending record expires after the pending TTL (default 7 days) unless approved; approval clears the TTL and the record becomes `until_revoked`.
 - **active**: Approved. Visible per consent scope.
 - **superseded**: Replaced by a newer record. Still readable for audit; filtered out of "current beliefs" queries.
 - **revoked**: Content deleted. Cascades to all derivatives. Invisible to all Views. Only a content-free tombstone (ID, kind, timestamps, derivative links) remains. Cannot be undone; propose the fact again if needed.
@@ -121,6 +127,23 @@ Each agent gets a `View` constructed from the raw store. The View applies:
 4. **Status filter** — `pending` visible only to writer; `revoked` and `rejected` invisible to all; `superseded` visible for audit.
 
 Views are read-only. Writes go through `View.Propose()`, which creates a `pending` record. A reviewer View (`NewReviewerView`) can `Approve`, `Reject`, or `Revoke`.
+
+## Pending hygiene
+
+- **TTL:** `LOOMWORK_PENDING_TTL` seconds (default 604800; 0 = no expiry). Applied to every agent proposal: the effective expiry while pending is `min(writer's TTL, pending TTL)`, and a writer-supplied `expiresAt` is discarded. The writer's own retention is remembered and takes effect on approval (a TTL restarts at approval), so an agent cannot opt out of the pending expiry by asking for a long TTL.
+- **Cap:** `LOOMWORK_PENDING_CAP` per writer (default 50; 0 = unlimited). Counts pending records and staged proposals. A proposal over the cap is refused with an error.
+- **Visibility:** `run`/`ask` print `N pending` in the status line when the agent has proposals awaiting review; `loomwork memory list --status pending` shows them.
+- The reviewer view is exempt from TTL and cap.
+- Expiry deletes: an expired pending record gets the same tombstone as `reject`/`revoke` (content and embedding removed). Deletion happens when the store is next opened; until then the record is hidden from all views.
+- To exercise the agent path from the CLI: `loomwork memory propose ... --as-agent <name>`.
+
+## Write-gate (opt-in)
+
+`LOOMWORK_WRITE_GATE=1` makes agent views stage proposals in a `proposals` table instead of `records`. Staged proposals live in the `proposals` table of `~/.loomwork/memory.db`, with no derivative edges, embeddings or search entries. `loomwork memory list --status pending` shows them (marked `staged`) and `loomwork memory stats` counts them. Expired staged proposals are deleted, not hidden. Only the reviewer can list, approve (which moves the proposal into `records` as `active`) or reject (which deletes it). Tradeoff: the writer cannot read back its own proposal, so it cannot build on it before approval. Off by default.
+
+## Limits: covert channel
+
+A writer can see its own pending records and its own replayed conversational entries, so a compromised agent can use them to hold data or signal across sessions (contents, timing, volume; between ACIs that share a name). TTL, cap, the visible pending count and the write-gate narrow this and make it visible; they do not remove it. Conversational entries are not capped.
 
 ## Keeping setup minimal
 

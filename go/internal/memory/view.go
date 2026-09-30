@@ -23,11 +23,25 @@ type View struct {
 	agentID    string
 	scopes     []string
 	canApprove bool // if true, this view can approve pending records
+	limits     Limits
+	writeGate  bool
 }
 
-// NewView constructs a filtered view for an agent.
+// Options tunes an agent view.
+type Options struct {
+	Limits    Limits
+	WriteGate bool // proposals are staged outside the record store until approved
+}
+
+// NewView constructs a filtered view for an agent with the default limits
+// (see DefaultLimits) and ordinary pending-record writes.
 func NewView(store *Store, agentID string, scopes []string) *View {
-	return &View{store: store, agentID: agentID, scopes: scopes}
+	return NewViewOpts(store, agentID, scopes, Options{Limits: DefaultLimits(), WriteGate: WriteGateFromEnv()})
+}
+
+// NewViewOpts constructs a filtered view with explicit options.
+func NewViewOpts(store *Store, agentID string, scopes []string, o Options) *View {
+	return &View{store: store, agentID: agentID, scopes: scopes, limits: o.Limits, writeGate: o.WriteGate}
 }
 
 // NewReviewerView constructs a view that can approve pending records.
@@ -46,9 +60,21 @@ func (v *View) List(kind Kind, limit int) ([]*Record, error) {
 	if err != nil {
 		return nil, err
 	}
+	if v.canApprove {
+		// A reviewer also sees proposals staged by write-gated writers.
+		staged, err := v.store.ListProposals("")
+		if err != nil {
+			return nil, err
+		}
+		for _, r := range staged {
+			if kind == "" || r.Kind == kind {
+				records = append(records, r)
+			}
+		}
+	}
 	var out []*Record
 	for _, r := range records {
-		if !r.IsVisibleTo(v.agentID, v.scopes) {
+		if !v.sees(r) {
 			continue
 		}
 		out = append(out, r)
@@ -62,10 +88,19 @@ func (v *View) List(kind Kind, limit int) ([]*Record, error) {
 // Get returns a single record if visible to this view.
 func (v *View) Get(id string) (*Record, error) {
 	r, err := v.store.Get(id)
-	if err != nil || r == nil {
+	if err != nil {
 		return nil, err
 	}
-	if !r.IsVisibleTo(v.agentID, v.scopes) {
+	if r == nil && v.canApprove {
+		r, err = v.store.GetProposal(id)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if r == nil {
+		return nil, nil
+	}
+	if !v.sees(r) {
 		return nil, nil // not visible = doesn't exist, from the agent's POV
 	}
 	return r, nil
@@ -75,19 +110,60 @@ func (v *View) Get(id string) (*Record, error) {
 // until a reviewer approves it (status: pending → active).
 //
 // Agents propose; the user (or a policy) decides what becomes durable.
+//
+// Agent writers (not the reviewer) are held to the view's limits: a proposal
+// that would exceed the per-writer pending cap is refused, and an unapproved
+// proposal expires after the pending TTL. With the write gate on, the proposal
+// is staged outside the record store and the writer cannot read it back.
 func (v *View) Propose(r *Record) error {
 	r.Status = StatusPending
 	r.Provenance.WriterAgentID = v.agentID
 	if r.Provenance.WrittenAt == "" {
 		r.Provenance.WrittenAt = time.Now().UTC().Format(time.RFC3339)
 	}
+	if !v.canApprove {
+		if max := v.limits.MaxPendingPerWriter; max > 0 {
+			n, err := v.store.PendingCount(v.agentID)
+			if err != nil {
+				return err
+			}
+			if n >= max {
+				return fmt.Errorf("pending limit reached: %s already has %d proposals awaiting review (cap %d); approve or reject some with `loomwork memory`", v.agentID, n, max)
+			}
+		}
+		r.Retention = clampPendingRetention(r.Retention, v.limits.PendingTTL)
+	}
+	if v.writeGate {
+		return v.store.Stage(r)
+	}
 	return v.store.Write(r)
+}
+
+// sees reports whether this view may read r. A reviewer view (the user's CLI,
+// created only by NewReviewerView) also reads other writers' unexpired pending
+// records; that privilege is a property of the view, not a scope an agent
+// could be handed.
+func (v *View) sees(r *Record) bool {
+	if v.canApprove && r.Status == StatusPending && !r.IsExpired() {
+		return true
+	}
+	return r.IsVisibleTo(v.agentID, v.scopes)
+}
+
+// PendingCount is the number of this agent's proposals still awaiting review.
+func (v *View) PendingCount() (int, error) {
+	return v.store.PendingCount(v.agentID)
 }
 
 // Approve promotes a pending record to active. Only reviewer views can do this.
 func (v *View) Approve(recordID string) error {
 	if !v.canApprove {
 		return fmt.Errorf("this view cannot approve records (use a reviewer view)")
+	}
+	if staged, err := v.store.GetProposal(recordID); err != nil {
+		return err
+	} else if staged != nil {
+		return v.store.PromoteProposal(recordID)
 	}
 	r, err := v.store.Get(recordID)
 	if err != nil || r == nil {
@@ -97,6 +173,7 @@ func (v *View) Approve(recordID string) error {
 		return fmt.Errorf("record is not pending (status=%s)", r.Status)
 	}
 	r.Status = StatusActive
+	clearPendingTTL(r)
 	return v.store.Write(r)
 }
 
@@ -104,6 +181,11 @@ func (v *View) Approve(recordID string) error {
 func (v *View) Reject(recordID string) error {
 	if !v.canApprove {
 		return fmt.Errorf("this view cannot reject records")
+	}
+	if staged, err := v.store.GetProposal(recordID); err != nil {
+		return err
+	} else if staged != nil {
+		return v.store.DeleteProposal(recordID)
 	}
 	return v.store.Reject(recordID)
 }
@@ -129,7 +211,7 @@ func (v *View) Search(query string, limit int) ([]*Record, error) {
 	q := strings.ToLower(query)
 	var out []*Record
 	for _, r := range all {
-		if !r.IsVisibleTo(v.agentID, v.scopes) {
+		if !v.sees(r) {
 			continue
 		}
 		if strings.Contains(strings.ToLower(r.contentString()), q) {

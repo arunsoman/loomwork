@@ -28,6 +28,19 @@ func cmdPackage(args []string) {
 	parseArgs(fs, args)
 	sourceDir := "."
 
+	// A plain folder (AGENT.md, skills/*.md) is a valid input:
+	// generate the manifest around it first.
+	if isPlainFolder(sourceDir, false) {
+		if err := scaffoldFromFolder(sourceDir); err != nil {
+			fail(err)
+		}
+	} else if isFolderAgent(sourceDir) {
+		// Folder-built agent, packaged again: pick up skills added since init.
+		if err := refreshFolderSkills(sourceDir); err != nil {
+			fail(err)
+		}
+	}
+
 	if *keyPath == "" {
 		*keyPath = defaultKeyPath()
 	}
@@ -38,6 +51,8 @@ func cmdPackage(args []string) {
 	if err != nil {
 		fail(err)
 	}
+
+	warnUnlistedSkills(sourceDir, manifest.Digests)
 
 	// The skills graph must be acyclic and its implementations present.
 	if err := aci.DetectCyclesInDirectory(sourceDir); err != nil {

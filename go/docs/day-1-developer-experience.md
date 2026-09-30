@@ -121,6 +121,16 @@ What happens:
 
 This is the demo-worthy moment: the agent remembers what was discussed in step 4, even though step 6 loads from a packaged .aci.
 
+## Already have a folder of markdown?
+
+Skip the scaffold. A directory with `AGENT.md` (and optionally `skills/*.md`) is packaged directly. A `MEMORY.md` next to them is not packed; memory never travels inside an ACI:
+
+```bash
+cd my-agent && loomwork package --out my-agent.aci
+```
+
+`loomwork init` does the same generation without packaging. Add a skill later by dropping `skills/<name>.md` in the folder and running `loomwork package` again; it is picked up, and `package` warns about any skill file it cannot list. Skill files are instructions given to the model; they are not executed. Your files are packed as written.
+
 ## What makes this work (the design constraints)
 
 1. **Zero required config.** No YAML, no JSON config files, no env files. Sensible defaults everywhere. `loomwork doctor` is the only debugging command.

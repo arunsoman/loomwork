@@ -22,8 +22,42 @@ package memory
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"os"
+	"strconv"
 	"time"
 )
+
+// Pending hygiene defaults. Unapproved proposals from agents expire on their
+// own, and one writer cannot pile up an unbounded review queue.
+const (
+	DefaultPendingTTL          = 7 * 24 * time.Hour
+	DefaultMaxPendingPerWriter = 50
+)
+
+// Limits bounds what agent writers may leave pending.
+type Limits struct {
+	PendingTTL          time.Duration // 0 = pending records never expire
+	MaxPendingPerWriter int           // 0 = unlimited
+}
+
+// DefaultLimits returns the built-in limits, overridden by
+// LOOMWORK_PENDING_TTL (seconds) and LOOMWORK_PENDING_CAP when set.
+func DefaultLimits() Limits {
+	l := Limits{PendingTTL: DefaultPendingTTL, MaxPendingPerWriter: DefaultMaxPendingPerWriter}
+	if v, err := strconv.ParseInt(os.Getenv("LOOMWORK_PENDING_TTL"), 10, 64); err == nil && v >= 0 {
+		l.PendingTTL = time.Duration(v) * time.Second
+	}
+	if v, err := strconv.Atoi(os.Getenv("LOOMWORK_PENDING_CAP")); err == nil && v >= 0 {
+		l.MaxPendingPerWriter = v
+	}
+	return l
+}
+
+// WriteGateFromEnv reports whether LOOMWORK_WRITE_GATE requests gated writes.
+func WriteGateFromEnv() bool {
+	v := os.Getenv("LOOMWORK_WRITE_GATE")
+	return v == "1" || v == "true"
+}
 
 // Kind is the record type discriminator.
 type Kind string
@@ -61,6 +95,12 @@ type Retention struct {
 	Mode       string `json:"mode"`                 // "until_revoked" | "ttl"
 	TTLSeconds int64  `json:"ttlSeconds,omitempty"` // for "ttl" mode
 	ExpiresAt  string `json:"expiresAt,omitempty"`  // computed on write
+	// PendingTTL marks an expiry imposed by the runtime on an unapproved
+	// proposal. The writer's own retention is kept in Requested* and takes
+	// effect only on approval (see clearPendingTTL).
+	PendingTTL          bool   `json:"pendingTtl,omitempty"`
+	RequestedMode       string `json:"requestedMode,omitempty"`
+	RequestedTTLSeconds int64  `json:"requestedTtlSeconds,omitempty"`
 }
 
 // Provenance traces a record back to its origin.
@@ -182,8 +222,8 @@ func (r *Record) IsExpired() bool {
 
 // IsVisibleTo returns true if the record is visible to the given agent.
 // Revoked, rejected and expired records are never visible. A pending record is
-// visible only to its writer. High-sensitivity records additionally require
-// the reviewer identity ("user") or the "sensitive" scope. Otherwise an active
+// visible only to its writer (a reviewer View also sees it; see View.sees).
+// High-sensitivity records additionally require the reviewer identity ("user") or the "sensitive" scope. Otherwise an active
 // record is visible per its consent scope.
 func (r *Record) IsVisibleTo(agentID string, agentScopes []string) bool {
 	if r.Status == StatusRevoked || r.Status == StatusRejected || r.IsExpired() {

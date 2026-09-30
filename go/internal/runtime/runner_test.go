@@ -12,6 +12,7 @@ import (
 
 	"loomwork.dev/loomwork/internal/aci"
 	"loomwork.dev/loomwork/internal/llm"
+	"loomwork.dev/loomwork/internal/memory"
 )
 
 type fakeOllama struct {
@@ -275,5 +276,65 @@ func TestPrepareRejectsCyclicSkills(t *testing.T) {
 	})
 	if err := r.Prepare(); err == nil || !strings.Contains(err.Error(), "cycle") {
 		t.Fatalf("cyclic skills must be rejected at load, got %v", err)
+	}
+}
+
+func TestStatusLineShowsPendingOnlyWhenNonZero(t *testing.T) {
+	r, home := testRunner(t, newFakeOllama("llama3.2"), nil)
+	store, err := memory.OpenStore(filepath.Join(home, "typed.db"), "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { store.Close() })
+	r.Typed = memory.NewViewOpts(store, "agent", nil, memory.Options{})
+	if strings.Contains(r.StatusLine(), "pending") {
+		t.Fatalf("no pending records, but status says: %s", r.StatusLine())
+	}
+	rec := memory.NewRecord(memory.KindPreference, memory.SensLow, memory.Provenance{Source: "agent_inferred"})
+	rec.Preference = &memory.Preference{Key: "k", Value: "v", Source: "inferred", Confidence: 0.5}
+	if err := r.Typed.Propose(rec); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(r.StatusLine(), "1 pending") {
+		t.Fatalf("status line should show the pending count: %s", r.StatusLine())
+	}
+}
+
+// A folder-built agent (AGENT.md persona, markdown skills) must load AND run,
+// and the skill text must actually reach the model.
+func TestFolderAgentRunsWithMarkdownSkills(t *testing.T) {
+	f := newFakeOllama("llama3.2")
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	dir := filepath.Join(home, "folder-agent")
+	os.MkdirAll(filepath.Join(dir, "skills"), 0o755)
+	os.WriteFile(filepath.Join(dir, "AGENT.md"), []byte("You are the folder agent.\n"), 0o644)
+	os.WriteFile(filepath.Join(dir, "skills", "review.md"), []byte("---\nname: review\n---\nALWAYS-CHECK-THE-TESTS-FIRST\n"), 0o644)
+	skills, err := aci.SkillsFromMarkdownDir(dir)
+	if err != nil || len(skills) != 1 || skills[0].Impl.Type != "md" {
+		t.Fatalf("skills: %+v, %v", skills, err)
+	}
+	if err := SaveManifest(dir, "folder-agent", ScaffoldOptions{PersonaPath: "AGENT.md", Skills: skills}); err != nil {
+		t.Fatal(err)
+	}
+	arch, err := aci.ArchiveFromDirectory(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mem, err := OpenMemory(filepath.Join(home, "m.db"), "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { mem.Close() })
+	r := &Runner{Archive: arch, Memory: mem, Ollama: llm.NewOllama(f.URL)}
+	if _, err := r.Ask("hello"); err != nil {
+		t.Fatalf("folder-built agent must run: %v", err)
+	}
+	sys := f.requests[0].Messages[0].Content
+	if !strings.Contains(sys, "You are the folder agent.") || !strings.Contains(sys, "Skill: review") || !strings.Contains(sys, "ALWAYS-CHECK-THE-TESTS-FIRST") {
+		t.Fatalf("system prompt is missing persona or skill text:\n%s", sys)
+	}
+	if strings.Contains(sys, "name: review") {
+		t.Log("note: front-matter is passed through with the skill text")
 	}
 }

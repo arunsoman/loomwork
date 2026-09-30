@@ -24,7 +24,7 @@ type SkillDef struct {
 
 // SkillImpl is the optional implementation reference.
 type SkillImpl struct {
-	Type  string `json:"type"`  // "wasm", "python", "js"
+	Type  string `json:"type"`  // "wasm", "python", "js" (declared only), "md" (attached to the prompt)
 	Entry string `json:"entry"` // path to impl file
 }
 

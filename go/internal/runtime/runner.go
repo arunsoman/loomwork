@@ -154,6 +154,12 @@ func (r *Runner) AskWithContext(userInput, extra string) (string, error) {
 		return "", fmt.Errorf("session token budget exhausted: %d of %d tokens used", r.sessionTokens, r.budget.perSession)
 	}
 
+	// Markdown skills are instructions for the model, attached to the prompt.
+	// They are never executed.
+	if section := r.markdownSkillsSection(); section != "" {
+		systemPrompt += "\n\n" + section
+	}
+
 	// The user's approved typed memory that this agent may see.
 	if section := r.typedMemorySection(); section != "" {
 		systemPrompt += "\n\n" + section
@@ -206,6 +212,43 @@ func (r *Runner) AskWithContext(userInput, extra string) (string, error) {
 	return resp.Message.Content, nil
 }
 
+// Limits on skill text attached to the prompt, so a large skill folder cannot
+// crowd out the conversation.
+const (
+	maxSkillBytes       = 8 << 10
+	maxSkillsTotalBytes = 32 << 10
+)
+
+// markdownSkillsSection renders the agent's skills whose implementation is a
+// markdown file (impl.type "md"). The files are part of the signed archive, so
+// they carry the same trust as the persona. Skills with other impl types are
+// declared only; the runtime does not execute them.
+func (r *Runner) markdownSkillsSection() string {
+	g, err := r.Archive.ParseSkillsGraph()
+	if err != nil {
+		return ""
+	}
+	var b strings.Builder
+	for _, sk := range g.Skills {
+		if sk.Impl == nil || sk.Impl.Type != "md" {
+			continue
+		}
+		body, ok := r.Archive.Files[sk.Impl.Entry]
+		if !ok {
+			continue
+		}
+		text := strings.TrimSpace(truncate(string(body), maxSkillBytes))
+		if b.Len()+len(text) > maxSkillsTotalBytes {
+			break
+		}
+		b.WriteString("### Skill: " + sk.Name + "\n" + text + "\n\n")
+	}
+	if b.Len() == 0 {
+		return ""
+	}
+	return "## Skills\n\nUse these skills when the request calls for them.\n\n" + strings.TrimRight(b.String(), "\n")
+}
+
 // StatusLine summarizes what is running: the model, tokens used this session,
 // and the sandbox the agent is confined to. It is meant for stderr after each answer.
 func (r *Runner) StatusLine() string {
@@ -217,7 +260,15 @@ func (r *Runner) StatusLine() string {
 	if llm.IsCloudModel(r.Model()) {
 		where = "CLOUD"
 	}
-	return fmt.Sprintf("[%s (%s) · %d tokens this session · %s]", r.Model(), where, r.sessionTokens, sandbox)
+	pending := ""
+	if r.Typed != nil {
+		if n, err := r.Typed.PendingCount(); err != nil {
+			pending = " · pending count unavailable: " + err.Error()
+		} else if n > 0 {
+			pending = fmt.Sprintf(" · %d pending (loomwork memory list --status pending)", n)
+		}
+	}
+	return fmt.Sprintf("[%s (%s) · %d tokens this session · %s%s]", r.Model(), where, r.sessionTokens, sandbox, pending)
 }
 
 // typedMemorySection renders active preferences, beliefs and failure notes
@@ -451,6 +502,19 @@ func truncate(s string, n int) string {
 // SaveManifestForInit writes a minimal manifest + supporting files to dir.
 // Used by `loomwork init`.
 func SaveManifestForInit(dir, name string) error {
+	return SaveManifest(dir, name, ScaffoldOptions{})
+}
+
+// ScaffoldOptions lets a plain-folder agent supply its own files. The zero
+// value produces the default `loomwork init` agent.
+type ScaffoldOptions struct {
+	PersonaPath string         // existing persona file to use as the system prompt (e.g. "AGENT.md"); "" writes the default
+	Skills      []aci.SkillDef // skills built from the folder; nil writes the two default skills
+}
+
+// SaveManifest scaffolds an agent in dir. Files the user already has (persona,
+// skills) are referenced and digested, never rewritten.
+func SaveManifest(dir, name string, opts ScaffoldOptions) error {
 	manifest := &aci.Manifest{
 		APIVersion: aci.APIVersion,
 		Kind:       aci.Kind,
@@ -507,7 +571,9 @@ and folders on this machine, propose actions, and remember what was discussed.
    will be available next time.
 4. **Stay local.** You run on the user's machine via Ollama. No cloud.
 `
-	if err := os.WriteFile(filepath.Join(dir, "persona/system_prompt.md"),
+	if opts.PersonaPath != "" {
+		manifest.Persona.SystemPrompt = opts.PersonaPath
+	} else if err := os.WriteFile(filepath.Join(dir, "persona/system_prompt.md"),
 		[]byte(systemPrompt), 0o644); err != nil {
 		return err
 	}
@@ -537,6 +603,13 @@ and folders on this machine, propose actions, and remember what was discussed.
   ]
 }
 `
+	if opts.Skills != nil {
+		b, err := json.MarshalIndent(aci.SkillsGraph{Skills: opts.Skills}, "", "  ")
+		if err != nil {
+			return err
+		}
+		skillsJSON = string(b) + "\n"
+	}
 	if err := os.WriteFile(filepath.Join(dir, "skills/graph.json"),
 		[]byte(skillsJSON), 0o644); err != nil {
 		return err
@@ -609,6 +682,16 @@ and folders on this machine, propose actions, and remember what was discussed.
 			return err
 		}
 		manifest.Digests[p] = aci.Sha256Bytes(data)
+	}
+	for _, sk := range opts.Skills {
+		if sk.Impl == nil {
+			continue
+		}
+		data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(sk.Impl.Entry)))
+		if err != nil {
+			return err
+		}
+		manifest.Digests[sk.Impl.Entry] = aci.Sha256Bytes(data)
 	}
 	manifestJSON, err := manifest.ToJSON()
 	if err != nil {

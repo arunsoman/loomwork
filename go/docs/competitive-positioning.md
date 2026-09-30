@@ -17,6 +17,10 @@
 | **Mem0 / Zep / NeuraKeep** | Agent memory | SDK / MCP | Vendor-hosted | — | Product, not spec |
 | **Loomwork (this repo)** | **Agent packaging (ACI) + agent-to-agent (AMP)** | stdio, WS, (libp2p deferred) | Typed, local-first (spec'd) | Optional, deferred | v0.1 draft, community review |
 
+## Plain-folder agents are a front end, not a rival
+
+The folder-of-markdown workflow (`AGENT.md`, `skills/`) is the simplest way to write an agent, and Loomwork accepts it as input: `loomwork init` / `loomwork package` generate the manifest, skills graph, bindings and sandbox around the user's own files, then sign and pack them. What Loomwork adds is what a plain folder cannot state: digests, a signature, a declared sandbox, and a memory contract. Authors keep the workflow they have.
+
 ## What Loomwork borrows (explicitly)
 
 | Borrowed from | What we take | Why |

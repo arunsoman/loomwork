@@ -47,6 +47,8 @@ loomwork run my-agent.aci --input "what did we just discuss?"
 
 The agent remembers. The package is signed and portable.
 
+Already keep an agent as plain markdown (`AGENT.md`, `skills/*.md`)? Run `loomwork package` in that folder; the manifest is generated around your files. A `MEMORY.md` there is left out of the package: memory stays on your machine.
+
 ---
 
 ## Community

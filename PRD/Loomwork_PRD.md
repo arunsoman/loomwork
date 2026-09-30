@@ -1,6 +1,6 @@
 # Loomwork — Product Requirements Document
 
-**Version:** 0.1 (draft) · **Status:** Open for community contribution · **Spec license:** CC-BY 4.0 · **Code license:** Apache 2.0
+**Version:** 0.1.1 (draft) · **Status:** Open for community contribution · **Spec license:** CC-BY 4.0 · **Code license:** Apache 2.0
 
 This document describes Loomwork as implemented in the reference Go runtime (`go/`, version 0.1.0). Requirement statements say what the runtime does today; the status column in §12 marks what is implemented, partial, or declared but not yet enforced.
 
@@ -122,13 +122,26 @@ The signature envelope is cosign-shaped JSON: `critical.identity`, `critical.typ
 
 ### 6.4 Skills graph
 
-`skills/graph.json` holds `skills[]` with `name`, `description`, `inputs`, `outputs`, `requires[]`, and an optional `impl` (`type`: wasm|python|js, `entry`: path). Packaging fails if a skill requires an unknown skill or if the graph has a cycle.
+`skills/graph.json` holds `skills[]` with `name`, `description`, `inputs`, `outputs`, `requires[]`, and an optional `impl` (`type`: wasm|python|js|md, `entry`: path). Packaging fails if a skill requires an unknown skill or if the graph has a cycle.
 
 ### 6.5 Tool bindings and sandbox spec
 
 `tools/bindings.json` declares bindings: `name`, `mcpServer`, `allowedTools[]`, `scope.paths[]`.
 
 `sandbox.json` declares `fs.read`, `fs.write`, `net.egress`, `net.listen`, `resources.cpu`, `resources.memory`, `time.maxWall`. A policy evaluator (`CheckRead`, `CheckWrite`, `CheckEgress`) exists in the runtime; see §9.4 for enforcement status.
+
+### 6.6 Plain-folder input
+
+The markdown workflow is the front end of the pipeline, not a separate format. A directory with `AGENT.md` and no `manifest.json` is a valid input to `loomwork init` and `loomwork package`:
+
+```
+my-agent/
+├── AGENT.md         persona / system prompt (used as persona.systemPrompt)
+├── skills/*.md      one skill per file; optional front-matter: name, description, requires
+└── MEMORY.md        your notes; NOT packaged (see below)
+```
+
+The runtime generates `manifest.json`, `skills/graph.json` (each skill file is the skill's `impl`, type `md`), `tools/bindings.json`, `sandbox.json` and `memory-schema.json` with defaults. The user's markdown files are digested, signed and packed as written and are never modified. At run time an `md` skill is instruction text: the runtime attaches its content (bounded, 8 KiB per skill and 32 KiB in total) to the system prompt, with the same trust as the persona because it is inside the signed archive. Skills with other `impl` types are declared only and are not executed. Re-running `loomwork package` in a folder-built agent re-reads `skills/*.md`, so a skill added after `init` is packaged; `loomwork init --force` regenerates the whole scaffold. `package` warns about any `skills/*.md` the manifest does not list. `MEMORY.md` is deliberately excluded from the archive, the digests and the signature: memory content never travels inside an ACI (§8.3), and `init`/`package` print a notice saying so. It creates no records.
 
 ## 7. Runtime
 
@@ -137,7 +150,7 @@ The signature envelope is cosign-shaped JSON: `critical.identity`, `critical.typ
 | Command | Behaviour |
 |---|---|
 | `loomwork doctor` | Checks Ollama reachability and installed models, signing key, memory store, workspace, spec version |
-| `loomwork init [dir]` | Scaffolds a valid agent with computed digests |
+| `loomwork init [dir]` | Scaffolds a valid agent with computed digests. In a plain folder (§6.6) it generates the manifest around the user's own files |
 | `loomwork ask "q" [--folder d]` | Indexes a folder through the agent's tool bindings and sandbox (listing plus small non-secret text samples) and answers with the local model |
 | `loomwork keygen [--out f]` | Generates an Ed25519 key (PKCS#8 PEM, mode 0600) and public key, and trusts it |
 | `loomwork trust list\|add\|remove` | Manages the keys whose signatures are accepted |
@@ -156,7 +169,7 @@ Flags may appear before or after positional arguments. `loomwork init` refuses t
 1. Parse the archive and manifest; validate schema; reject unsafe entry names, duplicate entries, oversized files (16 MiB each, 64 MiB total, 1024 files), unsupported entry types and any file the manifest does not list; verify all listed digests.
 2. Verify the signature and look the signer up in `~/.loomwork/trusted/`. An ACI with no signature, an invalid one, or a valid one from an untrusted key is refused. Overrides: `--allow-unsigned`, `--allow-untrusted-signer`. Directories (a user's own working copy) are not subject to this check.
 3. Validate the skills graph, parse `sandbox.json` and `tools/bindings.json`, and confirm the model server is an allowed egress host.
-4. Print a receipt line only if the attestation verifies against the ACI's signer and exact bytes, and a status line (model, local or cloud, tokens this session, sandbox) after each answer.
+4. Print a receipt line only if the attestation verifies against the ACI's signer and exact bytes, and a status line (model, local or cloud, tokens this session, sandbox, and the number of this agent's proposals still pending, when non-zero) after each answer.
 
 ### 7.2.1 Enforcement while running
 
@@ -185,6 +198,12 @@ Each `Ask` sends the agent's ten most recent user/assistant turns as real chat t
 
 ## 8. Memory
 
+**Two layers.** Memory has two layers with different trust:
+
+- **Conversational entries** are the raw log. The runtime persists them automatically (question, reply, token usage). They are never approved, and only the most recent turns are replayed to the same agent as chat history (§7.4).
+- **Typed records** are the trusted layer. Only `active` records, which a reviewer approved, are added to an agent's system prompt.
+- **Pending** records sit between them: persisted, but untrusted. A pending record is visible only to its writer and to the reviewer, and never appears in another agent's view or prompt. Pending is bounded (§8.2, R-24) and its size is shown after each answer (R-25).
+
 ### 8.1 Storage
 
 One SQLite file, `~/.loomwork/memory.db`.
@@ -207,7 +226,9 @@ Five record kinds share one envelope:
 Envelope fields: `id`, `kind`, `status` (pending → active → superseded | revoked), `sensitivity` (low|medium|high), `provenance` (writer agent, writer ACI, time, source, parent ID, source URI), `consent` (allowed agents, allowed scopes, public), `retention` (until_revoked | ttl), `derivatives[]`, timestamps.
 
 Lifecycle (statuses: pending, active, superseded, revoked, rejected):
-- **Propose:** agents create records as `pending`; a pending record is visible only to its writer.
+- **Propose:** agents create records as `pending`; a pending record is visible only to its writer (and the reviewer).
+- **Pending hygiene:** an agent's unapproved proposal expires after at most 7 days, whatever retention the writer asked for: the effective expiry while pending is min(writer's TTL, pending TTL), and a writer-supplied expiry timestamp is discarded. The writer's own retention takes effect only on approval, where a TTL restarts. The default pending TTL is 7 days (`LOOMWORK_PENDING_TTL`, seconds; 0 disables) and is deleted like any expired record (same tombstone as `reject`/`revoke`: content and embedding removed, only a content-free row remains); approval clears it. Expired records are deleted the next time the store is opened, and are invisible to every view until then. Each writer may have at most 50 records awaiting review (`LOOMWORK_PENDING_CAP`; 0 disables); further proposals are refused with a message. The reviewer (the user's CLI) is exempt from both.
+- **Write-gate (opt-in):** with `LOOMWORK_WRITE_GATE=1`, an agent's proposals are staged in the `proposals` table of `~/.loomwork/memory.db`, outside the `records` table, with no derivatives, embeddings or search entries, until the reviewer approves or rejects them. Staged proposals are shown by `loomwork memory list --status pending` (marked `staged`) and counted by `loomwork memory stats`. The cost: the writer cannot read back its own proposal. Off by default.
 - **Approve / reject:** only a reviewer view (the user's CLI) may promote or reject.
 - **Views:** an agent reads through a filtered view: revoked, rejected and expired records are hidden; high-sensitivity records need the `sensitive` scope; otherwise visibility follows consent lists, scopes, or the public flag. Agent identity is the ACI name.
 - **Revoke:** deletes the record's content and embedding, leaving a content-free tombstone, and does the same to everything derived from it: children by parent link, beliefs citing it as evidence, episodes that used it as input. It cannot be undone. `reject` does the same for a pending proposal.
@@ -241,6 +262,8 @@ See §7.2.1. Enforcement is in-process, on the operations the runtime performs. 
 With a local model, nothing leaves the machine. If the runtime falls back to an Ollama cloud model, prompts and conversation history go to that service; file contents are withheld unless `--allow-cloud-samples` is set. The runtime announces the cloud fallback at selection time and marks CLOUD in the status line.
 
 ### 9.6 Limits
+**Covert channel.** An agent can see its own pending records, and the runtime replays its recent conversational entries to it, so a compromised agent can use them to stash data or signal across sessions: through record contents, the timing or volume of proposals, or, if two ACIs share a name, to each other. The pending TTL, the per-writer cap, the visible pending count and the write-gate reduce and expose this channel; they do not close it. Conversational entries are not capped.
+
 Agent identity for memory consent is the ACI name, which any ACI can claim. The per-database encryption key is stored on the same machine as the database; it protects against reading a copied database, not against a process running as the user.
 
 ## 10. Agent Mesh Protocol (AMP) — v0.1 subset
@@ -301,6 +324,11 @@ Credit: an append-only JSONL receipt log (`CreditReceipt` with payer, payee, bre
 | R-21 | Run a named built-in agent (`loomwork run research`) | Not implemented |
 | R-22 | Tool execution through MCP servers | Not implemented |
 | R-23 | Keyless signing / transparency log | Not implemented |
+| R-24 | Pending records expire (default 7 days) and each writer has a pending cap (default 50) | Implemented (agent views; reviewer exempt) |
+| R-25 | Pending count shown in the post-answer status line | Implemented |
+| R-26 | Opt-in write-gate: proposals staged outside the record store until approved | Implemented (env `LOOMWORK_WRITE_GATE`; off by default) |
+| R-27 | Plain folder (`AGENT.md`, `skills/*.md`) accepted by `init` and `package`; `MEMORY.md` is never packed | Implemented |
+| R-28 | Conversation entries capped or covert-channel-resistant | Not implemented (documented limit, §9.6) |
 
 ## 13. Open design questions
 
@@ -309,7 +337,8 @@ Credit: an append-only JSONL receipt log (`CreditReceipt` with payer, payee, bre
 3. **Agent identity.** Memory consent currently keys on the ACI name. Should identity be the signing key, a DID, or name plus signer?
 4. **Enforcement layer.** In-process checks today; when are OS mechanisms (namespaces, seccomp, WASM) required for sandbox and tool scope?
 5. **Minimum AMP surface.** Whether delegate and report are enough for useful interoperability, or whether a handshake and cancel are needed.
-6. **Day-one path.** How a first run gets a model and a starter agent with no manual steps, without adding accounts or configuration.
+6. **Write-gate default.** Should the write-gate become the default once agents write typed records themselves, given that the writer then cannot read back its own proposal?
+7. **Day-one path.** How a first run gets a model and a starter agent with no manual steps, without adding accounts or configuration.
 
 ## 14. Roadmap
 

@@ -85,6 +85,19 @@ func (s *Store) PurgeExpired() (int, error) {
 			n++
 		}
 	}
+	// Staged (write-gated) proposals expire the same way.
+	staged, err := s.ListProposals("")
+	if err != nil {
+		return n, err
+	}
+	for _, r := range staged {
+		if r.IsExpired() {
+			if err := s.DeleteProposal(r.ID); err != nil {
+				return n, err
+			}
+			n++
+		}
+	}
 	return n, nil
 }
 
@@ -126,6 +139,14 @@ func (s *Store) initSchema() error {
                 );
                 CREATE INDEX IF NOT EXISTS idx_deriv_parent ON derivatives(parent_id);
                 CREATE INDEX IF NOT EXISTS idx_deriv_child  ON derivatives(child_id);
+
+                -- Write-gate staging: proposals held outside the record store
+                -- (no derivatives, embeddings or search) until a reviewer approves.
+                CREATE TABLE IF NOT EXISTS proposals (
+                        id          TEXT PRIMARY KEY,
+                        payload_enc BLOB NOT NULL,
+                        created_at  TEXT NOT NULL
+                );
         `)
 	return err
 }
@@ -381,11 +402,15 @@ type Stats struct {
 	ByKind     map[Kind]int   `json:"byKind"`
 	ByStatus   map[Status]int `json:"byStatus"`
 	Embeddings int            `json:"embeddings"`
+	Staged     int            `json:"staged"` // write-gated proposals in the proposals table
 }
 
 // ComputeStats returns summary stats.
 func (s *Store) ComputeStats() (*Stats, error) {
 	st := &Stats{ByKind: map[Kind]int{}, ByStatus: map[Status]int{}}
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM proposals`).Scan(&st.Staged); err != nil {
+		return nil, err
+	}
 	rows, err := s.db.Query(`SELECT kind, status FROM records`)
 	if err != nil {
 		return nil, err

@@ -16,7 +16,9 @@ import (
 // Creates: manifest.json, persona/system_prompt.md, skills/graph.json,
 // tools/bindings.json, memory-schema.json, sandbox.json, all with computed
 // digests, ready for `loomwork package`. It refuses to overwrite an existing
-// agent unless --force is given.
+// agent unless --force is given. If the directory is a plain folder (an AGENT.md
+// and no manifest.json), the manifest is generated around the user's own
+// AGENT.md and skills/*.md instead (MEMORY.md is never packaged); see folder.go.
 func cmdInit(args []string) {
 	fs := flag.NewFlagSet("init", flag.ExitOnError)
 	force := fs.Bool("force", false, "overwrite an existing agent in the directory")
@@ -27,6 +29,15 @@ func cmdInit(args []string) {
 	}
 	if _, err := os.Stat(filepath.Join(dir, "manifest.json")); err == nil && !*force {
 		fail(fmt.Errorf("%s already contains an agent (manifest.json); use --force to overwrite it", dir))
+	}
+	if isPlainFolder(dir, *force) {
+		if err := scaffoldFromFolder(dir); err != nil {
+			fail(err)
+		}
+		abs, _ := filepath.Abs(dir)
+		fmt.Printf("✓ Created manifest.json, skills/graph.json, tools/bindings.json, memory-schema.json, sandbox.json around your files\n")
+		fmt.Printf("\nNext: cd %s && loomwork package --out %s.aci\n", dir, filepath.Base(abs))
+		return
 	}
 	abs, _ := filepath.Abs(dir)
 	name := filepath.Base(abs)

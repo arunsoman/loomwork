@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 func openTestStore(t *testing.T) *Store {
@@ -452,5 +453,247 @@ func TestSupersede(t *testing.T) {
 	}
 	if oldAfter.Belief.SupersededBy != new.ID {
 		t.Error("old belief should point to superseder")
+	}
+}
+
+func prefRecord(key string) *Record {
+	r := NewRecord(KindPreference, SensLow, Provenance{Source: "agent_inferred"})
+	r.Preference = &Preference{Key: key, Value: "v", Source: "inferred", Confidence: 0.5}
+	return r
+}
+
+func TestPendingTTLAndApprovalClearsIt(t *testing.T) {
+	s := openTestStore(t)
+	agent := NewViewOpts(s, "agent_a", nil, Options{Limits: Limits{PendingTTL: time.Hour}})
+	r := prefRecord("k")
+	if err := agent.Propose(r); err != nil {
+		t.Fatal(err)
+	}
+	if r.Retention.Mode != "ttl" || !r.Retention.PendingTTL {
+		t.Fatalf("pending record should carry a runtime TTL: %+v", r.Retention)
+	}
+	if err := NewReviewerView(s).Approve(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(r.ID)
+	if got.Retention.Mode != "until_revoked" || got.Retention.ExpiresAt != "" {
+		t.Fatalf("approval should clear the pending TTL: %+v", got.Retention)
+	}
+
+	// An unapproved proposal past its TTL is purged, not merely hidden.
+	old := prefRecord("old")
+	if err := agent.Propose(old); err != nil {
+		t.Fatal(err)
+	}
+	stale, _ := s.Get(old.ID)
+	stale.Retention.ExpiresAt = time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	if err := s.Write(stale); err != nil {
+		t.Fatal(err)
+	}
+	if n, err := s.PurgeExpired(); err != nil || n != 1 {
+		t.Fatalf("PurgeExpired = %d, %v; want 1", n, err)
+	}
+	if g, _ := s.Get(old.ID); g.Preference != nil {
+		t.Fatal("expired pending content should be deleted")
+	}
+}
+
+func TestPendingCapPerWriter(t *testing.T) {
+	s := openTestStore(t)
+	lim := Limits{MaxPendingPerWriter: 2}
+	a := NewViewOpts(s, "agent_a", nil, Options{Limits: lim})
+	b := NewViewOpts(s, "agent_b", nil, Options{Limits: lim})
+	for i := 0; i < 2; i++ {
+		if err := a.Propose(prefRecord("k")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := a.Propose(prefRecord("k")); err == nil || !strings.Contains(err.Error(), "pending limit") {
+		t.Fatalf("third proposal should hit the cap, got %v", err)
+	}
+	if err := b.Propose(prefRecord("k")); err != nil {
+		t.Fatalf("cap is per writer: %v", err)
+	}
+	an, _ := a.PendingCount()
+	bn, _ := b.PendingCount()
+	if an != 2 || bn != 1 {
+		t.Fatalf("pending counts: a=%d b=%d", an, bn)
+	}
+	rev := NewReviewerView(s)
+	for i := 0; i < 5; i++ {
+		if err := rev.Propose(prefRecord("k")); err != nil {
+			t.Fatalf("reviewer is exempt from the cap: %v", err)
+		}
+	}
+	// Approving frees room.
+	recs, _ := rev.List(KindPreference, 100)
+	for _, r := range recs {
+		if r.Provenance.WriterAgentID == "agent_a" {
+			rev.Approve(r.ID)
+			break
+		}
+	}
+	if err := a.Propose(prefRecord("k")); err != nil {
+		t.Fatalf("approval should free a slot: %v", err)
+	}
+}
+
+func TestReviewerSeesAgentPending(t *testing.T) {
+	s := openTestStore(t)
+	a := NewViewOpts(s, "agent_a", nil, Options{})
+	other := NewViewOpts(s, "agent_b", nil, Options{})
+	r := prefRecord("k")
+	a.Propose(r)
+	if recs, _ := NewReviewerView(s).List(KindPreference, 10); len(recs) != 1 {
+		t.Fatalf("reviewer should see agent proposals, got %d", len(recs))
+	}
+	if recs, _ := other.List(KindPreference, 10); len(recs) != 0 {
+		t.Fatal("another agent must not see pending records")
+	}
+}
+
+func TestWriteGateStagesOutsideRecordStore(t *testing.T) {
+	s := openTestStore(t)
+	agent := NewViewOpts(s, "agent_a", nil, Options{WriteGate: true})
+	rev := NewReviewerView(s)
+
+	r := prefRecord("secret-thing")
+	if err := agent.Propose(r); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(r.ID); got != nil {
+		t.Fatal("gated proposal must not be in the record store")
+	}
+	if all, _ := s.Query(QueryFilter{}); len(all) != 0 {
+		t.Fatal("record store should be empty")
+	}
+	if recs, _ := agent.List("", 10); len(recs) != 0 {
+		t.Fatal("writer cannot read back a gated proposal")
+	}
+	if got, _ := agent.Get(r.ID); got != nil {
+		t.Fatal("writer cannot Get a gated proposal")
+	}
+	if hits, _ := agent.Search("secret-thing", 10); len(hits) != 0 {
+		t.Fatal("gated proposal must not be searchable")
+	}
+	if n, _ := agent.PendingCount(); n != 1 {
+		t.Fatalf("count still visible: %d", n)
+	}
+	if recs, _ := rev.List("", 10); len(recs) != 1 {
+		t.Fatalf("reviewer sees the staged proposal, got %d", len(recs))
+	}
+
+	// Approve promotes it into the record store as active.
+	if err := rev.Approve(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(r.ID)
+	if got == nil || got.Status != StatusActive || got.Retention.Mode != "until_revoked" {
+		t.Fatalf("promoted record: %+v", got)
+	}
+	if p, _ := s.GetProposal(r.ID); p != nil {
+		t.Fatal("staging row should be gone after promotion")
+	}
+
+	// Reject deletes the staged proposal outright.
+	r2 := prefRecord("nope")
+	agent.Propose(r2)
+	if err := rev.Reject(r2.ID); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := s.GetProposal(r2.ID); p != nil {
+		t.Fatal("rejected proposal should be deleted")
+	}
+	if n, _ := s.PendingCount("agent_a"); n != 0 {
+		t.Fatalf("pending after reject = %d", n)
+	}
+}
+
+func TestWriteGateProposalsExpire(t *testing.T) {
+	s := openTestStore(t)
+	agent := NewViewOpts(s, "agent_a", nil, Options{WriteGate: true, Limits: Limits{PendingTTL: time.Hour}})
+	r := prefRecord("k")
+	agent.Propose(r)
+	staged, _ := s.GetProposal(r.ID)
+	staged.Retention.ExpiresAt = time.Now().UTC().Add(-time.Minute).Format(time.RFC3339)
+	s.Stage(staged)
+	if n, _ := s.PurgeExpired(); n != 1 {
+		t.Fatalf("purged %d staged proposals, want 1", n)
+	}
+	if p, _ := s.GetProposal(r.ID); p != nil {
+		t.Fatal("expired staged proposal should be deleted")
+	}
+}
+
+// An agent must not be able to opt out of the pending expiry by supplying its
+// own long TTL or a pre-set ExpiresAt.
+func TestPendingExpiryCannotBeEvaded(t *testing.T) {
+	s := openTestStore(t)
+	agent := NewViewOpts(s, "agent_a", nil, Options{Limits: Limits{PendingTTL: time.Hour}})
+
+	r := prefRecord("k")
+	r.Retention = Retention{Mode: "ttl", TTLSeconds: 315360000, // ten years
+		ExpiresAt: time.Now().UTC().AddDate(10, 0, 0).Format(time.RFC3339)}
+	if err := agent.Propose(r); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(r.ID)
+	exp, err := time.Parse(time.RFC3339, got.Retention.ExpiresAt)
+	if err != nil || time.Until(exp) > time.Hour+time.Minute {
+		t.Fatalf("pending expiry must be clamped to the pending TTL, got %s", got.Retention.ExpiresAt)
+	}
+
+	// Approval hands the writer's own retention back (a TTL restarts at approval).
+	if err := NewReviewerView(s).Approve(r.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ = s.Get(r.ID)
+	if got.Retention.Mode != "ttl" || got.Retention.TTLSeconds != 315360000 || got.Retention.PendingTTL {
+		t.Fatalf("approval should restore the requested TTL: %+v", got.Retention)
+	}
+	if exp, _ := time.Parse(time.RFC3339, got.Retention.ExpiresAt); time.Until(exp) < 24*time.Hour {
+		t.Fatalf("restored TTL should restart from approval: %s", got.Retention.ExpiresAt)
+	}
+
+	// A shorter TTL than the pending TTL is honoured as is.
+	short := prefRecord("short")
+	short.Retention = Retention{Mode: "ttl", TTLSeconds: 60}
+	agent.Propose(short)
+	if got, _ := s.Get(short.ID); got.Retention.TTLSeconds != 60 || got.Retention.PendingTTL {
+		t.Fatalf("shorter agent TTL should stand: %+v", got.Retention)
+	}
+
+	// The same clamp applies to write-gated proposals.
+	gated := NewViewOpts(s, "agent_b", nil, Options{WriteGate: true, Limits: Limits{PendingTTL: time.Hour}})
+	g := prefRecord("g")
+	g.Retention = Retention{Mode: "ttl", TTLSeconds: 315360000}
+	gated.Propose(g)
+	st, _ := s.GetProposal(g.ID)
+	if exp, _ := time.Parse(time.RFC3339, st.Retention.ExpiresAt); time.Until(exp) > time.Hour+time.Minute {
+		t.Fatalf("staged proposal expiry not clamped: %s", st.Retention.ExpiresAt)
+	}
+}
+
+// Reviewer privilege belongs to the view: an agent handed a "reviewer" scope
+// string still cannot read other writers' pending records.
+func TestReviewerScopeStringGrantsNothing(t *testing.T) {
+	s := openTestStore(t)
+	NewViewOpts(s, "agent_a", nil, Options{}).Propose(prefRecord("k"))
+	spoof := NewViewOpts(s, "agent_b", []string{"reviewer"}, Options{})
+	if recs, _ := spoof.List(KindPreference, 10); len(recs) != 0 {
+		t.Fatal("a reviewer scope string must not reveal other writers' pending records")
+	}
+	if recs, _ := NewReviewerView(s).List(KindPreference, 10); len(recs) != 1 {
+		t.Fatal("the real reviewer view must still see it")
+	}
+}
+
+// A closed store must surface as an error, not as "0 pending".
+func TestPendingCountReportsErrors(t *testing.T) {
+	s := openTestStore(t)
+	v := NewViewOpts(s, "agent_a", nil, Options{})
+	s.Close()
+	if _, err := v.PendingCount(); err == nil {
+		t.Fatal("expected an error from a closed store")
 	}
 }
