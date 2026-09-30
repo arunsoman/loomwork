@@ -496,6 +496,7 @@ This design has been shaped by public discussion. Contributions credited so far:
 |---|---|
 | u/Otherwise_Wave9374 | Typed memory records with provenance, consent scope, retention and per-tool access; raw memory in a user-controlled store with filtered agent views; revocation across embeddings, summaries and caches as the acceptance test; NeuraKeep as a reference for persistent agent memory |
 | u/Appropriate-Fix4695 | Local-first memory that follows the user rather than the app; keep configuration minimal |
+| u/Slight-Living-8098 | Tier 0/1 folder-first design (§6.7) |
 | u/Other-Breakfast-3192 | Reference material on ephemeral root filesystems (LogOS discussion #77) |
 
 ## Appendix A — Example ACI
