@@ -56,6 +56,8 @@ The need Loomwork addresses is narrower: *keep exactly that workflow, and get th
 
 **What "free" does not cover.** The Tier 1 rows are a plan, not a shipped feature. `MEMORY.md` holds the same kind of content the typed records exist for (preferences, facts, decisions, failures), so the memory protections are what a folder user most wants, and they apply to typed records today, not yet to the lines of a `MEMORY.md` file. Signing proves who packaged an agent, not that the agent is safe. The sandbox is in-process and not an OS boundary.
 
+**How the upgrade is meant to happen (planned, §6.7.1).** Running `loomwork` in your folder is enough: Loomwork keeps its own records about the folder under `~/.loomwork/` and writes nothing into it, so the folder stays exactly as you keep it and leaving is deleting those records. Anything that has to live inside the folder, for other tools to use, is added only after you agree once for that folder, and is listed so it can be removed. Signing and packaging for other people are never automatic.
+
 ## 3. Goals and non-goals
 
 ### Goals
@@ -185,7 +187,7 @@ The exit path is `loomwork leave` (§8.4): the folder is byte-identical to befor
 
 ### 6.7 Portable agent folder: Tier 0 and Tier 1 (planned)
 
-*Status: design only; see R-29 to R-38 in §12.*
+*Status: design only; see R-29 to R-38 and R-42 to R-47 in §12.*
 
 **Two problems, one folder.** Two different needs are easy to confuse:
 
@@ -252,6 +254,36 @@ Tier 1 adds integrity and history without keys or a runtime service.
 - `writer` is a label, not an identity (compare §9.6).
 - A harness that ignores the bootstrap is not stopped by Tier 1; `check` shows afterwards what changed.
 - Tier 1 does not sandbox anything. Enforcement of files, network and consent remains a Tier 2 and runtime matter (§7.2.1, §9.4).
+
+#### 6.7.1 Two lanes: what is automatic and what needs consent
+
+The tiers describe *what* a folder gets. This subsection says *where* the extra files live and *who decides*. The aim is that a user at Tier 0 gets the benefits without doing anything, and can leave without a trace, while the contract of §8.4 (Loomwork never edits the user's own files) still holds.
+
+**Lane A: automatic, nothing written into the folder.**
+
+- **Trigger.** The user runs a `loomwork` command in a folder that holds an `AGENT.md`. There is no daemon and no file watcher; Loomwork does nothing between commands.
+- **Shadow store.** Loomwork keeps the Tier 1 and Tier 2 data for that folder under `~/.loomwork/folders/<pathhash>/`: a manifest of digests, a hash-chained journal, handoff receipts and a local key. Typed memory stays in `memory.db` (§8.1). The folder itself is only read.
+- **What the user gets without acting.** Enforcement of the sandbox and budgets on `run`, consent-filtered memory views, `check` against the recorded digests, and receipts of which state a run started from.
+- **Notice.** The first time, one non-blocking line says that the folder is being tracked under `~/.loomwork`, that no file in it is touched, and how to remove the tracking (`loomwork leave`). It is not a prompt and it is not hidden.
+- **Recording is not blessing.** Changes made outside Loomwork are journaled automatically with `source: detected`. `check` compares against the last state the user acknowledged with `seal`, so automatic recording never hides a change.
+- **Never automatic, even here.** Signing with a trusted key, `package`, and granting any capability beyond the defaults. A receipt is labelled verified only for a key the user created and trusts. A folder the user did not create, for example a fresh clone, gets the default deny sandbox and no verified label.
+- **Guards.** Loomwork refuses to track `$HOME`, `/`, and any folder without a regular-file `AGENT.md`, and follows no symlinked `AGENT.md`.
+
+**Lane B: one consent per folder, for files that must live in the folder.** Other harnesses can only use what is in the folder: the bootstrap line in `CLAUDE.md` or `AGENTS.md`, `state/HANDOFF.md`, `state/pending/`, and an in-folder journal for syncing between machines.
+
+- `loomwork adopt` lists the exact files it would create or change and writes them only after the user agrees for that folder. Files that do not exist are created; an existing user file is changed only by inserting a block between marker lines, never by rewriting it.
+- It records an **adoption ledger** in `~/.loomwork/adopted/<pathhash>.json`: each created path with its digest, and each inserted block with the digest of the file before insertion.
+- `bootstrap` without `--apply` only prints the snippet.
+
+**Tier 2 stays explicit.** `package` and signing are commands the user runs, with a key the user generated, because they hand content to other people.
+
+**Leave.** See §8.4. Lane A leave deletes the shadow store. Lane B leave reverses the ledger and removes only what still matches it.
+
+**Trade-offs.**
+
+- A shadow journal lives on one machine and does not sync. Users who move between machines use the Lane B in-folder journal.
+- The promise is "removes everything Loomwork added; your own files are untouched", not "as if nothing happened": modification times, Git history and editor backup files cannot be rewound.
+- Lane A depends on the user running a command; a change made and left unread by any tool is only noticed at the next run.
 
 ## 7. Runtime
 
@@ -359,8 +391,9 @@ The user's markdown file is an interface, one direction at a time: import reads 
 - **`loomwork memory export [--out FILE] [--force]`** emits active records only (not pending, revoked, superseded or expired), to stdout or to FILE (suggested name `memory-export.md`). `--out` refuses to overwrite an existing file without `--force`, and refuses `MEMORY.md` as a target always, even with `--force` or through a symlink.
 - **Export format.** One block per record: YAML-style front-matter (`kind`, `id`, `created`, `sensitivity`, `provenance.writer`, `provenance.source`, optional `provenance.aci` and `provenance.sourceUri`, `consent` as `public`, `restricted` or `private` with `consent.allowedAgents` and `consent.allowedScopes` lists, and the typed `payload` as one line of JSON), then the content as markdown. Consent is rendered as fields, not flattened into prose. The format round-trips through import: kind, content, sensitivity, provenance and consent survive export → import → approve → export unchanged, apart from `id` and `created`. It does not preserve IDs, retention, status, derivative links, or the evidence, parent and input references that name other records' old IDs (they are dropped on import); a `created` value becomes the imported record's provenance time. Lossless by convention, not by guarantee: the front-matter is the contract.
 - **`loomwork leave [--export FILE] [--delete-store] [--yes]`** is the one-step exit. With `--export` it performs the export above (same refusals) and reports the record count. It prints an inventory: the memory store path and key path (resolved from `$HOME`, not hardcoded), any `*.aci` in the current directory, and that Loomwork never modified the folder's own files. `--delete-store` deletes the memory database, its salt and its key file, and nothing else; the signing key and trust list are kept. Without `--export`, `--delete-store` prints a warning and does nothing unless `--yes` is also given. The store also holds conversation history, which is deleted with it and not exported.
+- **`leave` with folder tracking (planned, §6.7.1).** `leave` also removes the shadow store for the current folder, after the export. For a folder that was adopted (Lane B) it reads the adoption ledger and removes each created file only if its digest still matches the ledger, and removes each inserted block only if the text between the markers is unchanged. Anything the user edited since is kept, and `leave` prints it with the reason. It prints what it removed and what it kept. Nothing outside the ledger is ever deleted.
 
-**Contract.** (1) No Loomwork command edits, renames or deletes a file the user wrote (`AGENT.md`, `skills/*.md`, `MEMORY.md`). (2) The folder holds identity; `~/.loomwork` holds state. (3) After `leave`, the folder is byte-identical to before, memory is exported, and the conventional workflow still works. (4) The file is the interface, one direction at a time. R-39 is the CI test of rules 1 to 3.
+**Contract.** (1) No Loomwork command edits, renames or deletes a file the user wrote (`AGENT.md`, `skills/*.md`, `MEMORY.md`). (2) The folder holds identity; `~/.loomwork` holds state. (3) After `leave`, the folder is byte-identical to before, memory is exported, and the conventional workflow still works. Once Lane B is implemented, this reads: everything Loomwork added and the user has not edited is removed, anything the user edited is kept and reported, and the user's own files are unchanged. (4) The file is the interface, one direction at a time. R-39 is the CI test of rules 1 to 3.
 
 ## 9. Security model
 
@@ -466,6 +499,12 @@ Credit: an append-only JSONL receipt log (`CreditReceipt` with payer, payee, bre
 | R-39 | Byte-identical lifecycle: package, import, propose (agent, one write-gated), approve, export, `leave --export --delete-store` leave the user's files unchanged and add only the archive, its sidecars and the export files | Implemented (Go test `TestByteIdenticalLifecycle`, runs the built binary with a temporary `HOME`; part of `go test ./...`) |
 | R-40 | `loomwork leave [--export FILE] [--delete-store]` exports memory, prints an inventory and deletes only the memory store, never without an export or `--yes` | Implemented (`TestByteIdenticalLifecycle`, `TestLeaveDeleteStoreNeedsExportOrYes`) |
 | R-41 | `loomwork memory import` (pending-only, no dedup) and `export` (active-only, never `MEMORY.md`) with a round-tripping front-matter format (§8.4) | Implemented (memory-package round-trip tests; CLI tests) |
+| R-42 | Lane A: running `loomwork` in a folder with `AGENT.md` keeps a shadow store under `~/.loomwork/folders/` and writes nothing into the folder | Not implemented |
+| R-43 | Lane A notice printed once per folder, non-blocking, naming the store path and `leave` | Not implemented |
+| R-44 | Lane A journals outside changes as `source: detected`; `check` compares against the last `seal` | Not implemented |
+| R-45 | Signing, `package` and capability grants beyond defaults are never automatic; verified label only for a user-created trusted key; untracked or cloned folders get default deny | Not implemented |
+| R-46 | `loomwork adopt` lists exact files, writes only after consent, records the adoption ledger; existing user files changed only by marker-delimited insertion | Not implemented |
+| R-47 | `leave` removes the shadow store and reverses the ledger only where digests still match, keeping and reporting anything edited; extends R-39 | Not implemented |
 
 ## 13. Open design questions
 
@@ -480,6 +519,8 @@ Credit: an append-only JSONL receipt log (`CreditReceipt` with payer, payee, bre
 9. **Trust labels.** Should the runtime mark each line of loaded state by provenance (user-written, agent-written, pending) in the prompt, and how should a harness without Loomwork approximate that?
 10. **Two forms of long-term memory.** `MEMORY.md` and the typed records of §8.2 hold the same layer. Which is the source of truth: `MEMORY.md` rendered from active typed records (so lines gain provenance and revocation, and a hand edit becomes a proposal), typed records imported from approved `MEMORY.md` lines, or a sidecar that attaches an envelope (writer, time, retention) to each line? Revocation of a line cannot cascade to summaries derived from it unless those are tracked.
 11. **Day-one path.** How a first run gets a model and a starter agent with no manual steps, without adding accounts or configuration.
+12. **Adoption consent.** Is one agreement per folder the right unit, or should consent be per file kind (bootstrap line, `state/`, journal), and should it expire?
+13. **Shadow journal across machines.** Lane A records live on one machine. Is that acceptable, or should Lane A offer an export/import of the journal, or is Lane B the only answer for multi-machine users?
 
 ## 14. Roadmap
 
