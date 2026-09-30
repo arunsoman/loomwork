@@ -36,6 +36,9 @@ Usage:
   loomwork memory revoke <id>                     Revoke + cascade to derivatives
   loomwork memory graph <id>                      Show derivative graph
   loomwork memory stats                           Show counts by kind/status
+  loomwork memory import <file.md> [--kind K] [--sensitivity S] [--allow-agent a,b] [--public]
+                                                  Read a markdown file into PENDING records (no dedup)
+  loomwork memory export [--out FILE] [--force]   Write active records as markdown (e.g. memory-export.md)
 
 Record kinds: preference, episode, artifact, belief, failure
 Record statuses: pending, active, superseded, revoked
@@ -191,6 +194,10 @@ Record statuses: pending, active, superseded, revoked
 			fail(err)
 		}
 		printGraph(graph, "")
+	case "import":
+		cmdMemoryImport(view, rest)
+	case "export":
+		cmdMemoryExport(store, rest)
 	case "stats":
 		stats, err := store.ComputeStats()
 		if err != nil {

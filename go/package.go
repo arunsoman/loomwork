@@ -20,6 +20,10 @@ import (
 //
 // If --signing-key is omitted, ~/.loomwork/key.pem is used (and created if
 // missing). Only files named in the manifest are packed.
+//
+// In a plain folder (AGENT.md, no manifest.json) nothing is written into the
+// folder except the archive and its sidecars: the manifest is derived fresh on
+// every run, so it can never be stale. `loomwork init` opts into native mode.
 func cmdPackage(args []string) {
 	fs := flag.NewFlagSet("package", flag.ExitOnError)
 	keyPath := fs.String("signing-key", "", "PEM file with Ed25519 private key (default: ~/.loomwork/key.pem)")
@@ -27,13 +31,19 @@ func cmdPackage(args []string) {
 	withSBOM := fs.Bool("with-sbom", true, "write the SBOM + structural-check attestation sidecar")
 	parseArgs(fs, args)
 	sourceDir := "."
-
-	// A plain folder (AGENT.md, skills/*.md) is a valid input:
-	// generate the manifest around it first.
-	if isPlainFolder(sourceDir, false) {
-		if err := scaffoldFromFolder(sourceDir); err != nil {
+	// buildDir is where the manifest and signature are generated. For a native
+	// folder (it has manifest.json) that is the folder itself; for a plain
+	// folder it is a temporary staging directory, so nothing but the archive
+	// and its sidecars is ever written into the user's folder.
+	buildDir := sourceDir
+	plain := isPlainFolder(sourceDir, false)
+	if plain {
+		stage, err := stageFolder(sourceDir)
+		if err != nil {
 			fail(err)
 		}
+		defer os.RemoveAll(stage)
+		buildDir = stage
 	} else if isFolderAgent(sourceDir) {
 		// Folder-built agent, packaged again: pick up skills added since init.
 		if err := refreshFolderSkills(sourceDir); err != nil {
@@ -47,26 +57,28 @@ func cmdPackage(args []string) {
 	sk := loadOrCreateKey(*keyPath)
 
 	// Re-compute digests (files may have changed since init)
-	manifest, err := recomputeDigests(sourceDir)
+	manifest, err := recomputeDigests(buildDir)
 	if err != nil {
 		fail(err)
 	}
 
-	warnUnlistedSkills(sourceDir, manifest.Digests)
+	if !plain {
+		warnUnlistedFiles(sourceDir, manifest.Digests, *out)
+	}
 
 	// The skills graph must be acyclic and its implementations present.
-	if err := aci.DetectCyclesInDirectory(sourceDir); err != nil {
+	if err := aci.DetectCyclesInDirectory(buildDir); err != nil {
 		fail(fmt.Errorf("skills graph validation failed: %w", err))
 	}
 	fmt.Printf("✓ Skills graph validated (no cycles)\n")
 
-	if err := aci.SignArchiveInPlace(sourceDir, sk); err != nil {
+	if err := aci.SignArchiveInPlace(buildDir, sk); err != nil {
 		fail(err)
 	}
 	fmt.Printf("✓ Signed: signatures/manifest.sig (key-id: %s)\n", sk.KeyID)
 
 	// Pack (only manifest-listed files and the signature)
-	archive, err := aci.ArchiveFromDirectory(sourceDir)
+	archive, err := aci.ArchiveFromDirectory(buildDir)
 	if err != nil {
 		fail(err)
 	}
@@ -98,11 +110,11 @@ func cmdPackage(args []string) {
 
 	// Signed SBOM + structural checks, bound to this exact archive
 	if *withSBOM {
-		sbom, err := verify.BuildSBOM(sourceDir, manifest)
+		sbom, err := verify.BuildSBOM(buildDir, manifest)
 		if err != nil {
 			fail(err)
 		}
-		tests := verify.RunPropertyTests(sourceDir, manifest)
+		tests := verify.RunPropertyTests(buildDir, manifest)
 		att, err := verify.BuildAttestation(sbom, tests, archiveDigest, sk.KeyID, sk.Priv)
 		if err != nil {
 			fail(err)

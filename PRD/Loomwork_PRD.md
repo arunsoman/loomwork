@@ -1,8 +1,8 @@
 # Loomwork — Product Requirements Document
 
-**Version:** 0.1.1 (draft) · **Status:** Open for community contribution · **Spec license:** CC-BY 4.0 · **Code license:** Apache 2.0
+**Version:** 0.1.2 (draft) · **Status:** Open for community contribution · **Spec license:** CC-BY 4.0 · **Code license:** Apache 2.0
 
-This document describes Loomwork as implemented in the reference Go runtime (`go/`, version 0.1.0). Requirement statements say what the runtime does today; the status column in §12 marks what is implemented, partial, or declared but not yet enforced.
+This document describes Loomwork as implemented in the reference Go runtime (`go/`, version 0.1.2). Requirement statements say what the runtime does today; the status column in §12 marks what is implemented, partial, or declared but not yet enforced. §6.7 is a design for the next version: everything in it is marked "Not implemented" in §12.
 
 ---
 
@@ -24,6 +24,38 @@ Today an agent is not a thing you can own or move. What makes it useful — its 
 
 Loomwork's position is that a portable agent needs four things together: a **packaging format**, **verifiable provenance**, a **memory contract** the user controls, and a **runtime small enough to start in one command**.
 
+### 2.1 The user who already has a folder
+
+Many people already carry an agent between tools as plain files: an `AGENT.md` or system prompt, markdown skills, a `MEMORY.md`, sometimes a handoff note, kept in Git or a synced directory. **That works, and they can keep doing it.** Loomwork does not ask them to change format, and it does not need any harness to learn anything new.
+
+The need Loomwork addresses is narrower: *keep exactly that workflow, and get the guarantees a folder does not give you.*
+
+**The upgrade is free in the ways that matter:**
+
+- **No rewrite.** Your `AGENT.md` and `skills/` stay as they are (§6.6). Loomwork reads them and generates the rest around them; it never edits your files.
+- **No lock-in.** Every file remains ordinary markdown. To leave, stop running `loomwork`; the folder still works in every harness that worked before.
+- **No new dependency for other tools.** A harness that has never heard of Loomwork keeps reading the folder (§6.7, Tier 0).
+- **One binary, no service, no account.** Nothing is hosted, and nothing leaves the machine with a local model (§9.5).
+
+**What the folder does not give you, and what you get by moving:**
+
+| You want | Plain folder | With Loomwork | Status |
+|---|---|---|---|
+| To hand the agent to someone and let them prove it is yours and unaltered | A zip or a repo link; the recipient cannot tell if it was changed | Digests and an Ed25519 signature the recipient checks against keys they trust (`package`, `verify`, `trust`) | Available |
+| To know which exact files a run used | Nothing recorded | A signed attestation bound to the archive bytes, shown as a receipt when you run it | Available |
+| To limit what an agent may touch | Whatever the harness allows | Declared file, network and time limits, enforced on the runtime's own operations (§7.2.1); not OS isolation | Available (in-process) |
+| A cap on token spend | None | Per-turn, per-session and lifetime budgets | Available |
+| To catch a broken skill graph before it runs | Discovered at run time, or never | Cycles and missing skills rejected at packaging and at load | Available |
+| Long-term memory you can inspect, expire and delete for real | `MEMORY.md`: a line has no author, expiry or consent, and "deleting" it leaves it in history and backups | Typed records with provenance, consent and retention; revocation deletes content and everything derived from it; encrypted at rest (§8) | Available for typed records; **not yet for the lines of a `MEMORY.md` file (the largest gap; see §6.7 and §13)** |
+| Agent-written memory that you approve before it counts | The agent edits the file, or you never notice | Proposals stay `pending`, expire, are capped per writer and shown in the status line (§8.2) | Available for typed records; markdown proposals planned |
+| To know your state files are intact after a crash or a sync mishap | Hope | Atomic writes and `check` against recorded digests | Planned (Tier 1, §6.7) |
+| A tamper-evident history of who changed the agent's state | Git history, if you committed, and only as trustworthy as the repo | A hash-chained journal of writes, handoffs and receipts | Planned (Tier 1, §6.7) |
+| Handoff you can audit | A note that may or may not have been read | A receipt recording which handoff state the next agent started from | Planned (Tier 1, §6.7) |
+
+**Where the folder is enough.** If you never share the agent, never lose sleep over what an agent wrote into memory, and one machine or one Git repo covers you, stay with the folder. Loomwork earns its place when you hand an agent to someone else, when an agent writes to memory you rely on, or when you need to show afterwards what a run used and started from.
+
+**What "free" does not cover.** The Tier 1 rows are a plan, not a shipped feature. `MEMORY.md` holds the same kind of content the typed records exist for (preferences, facts, decisions, failures), so the memory protections are what a folder user most wants, and they apply to typed records today, not yet to the lines of a `MEMORY.md` file. Signing proves who packaged an agent, not that the agent is safe. The sandbox is in-process and not an OS boundary.
+
 ## 3. Goals and non-goals
 
 ### Goals
@@ -32,6 +64,7 @@ Loomwork's position is that a portable agent needs four things together: a **pac
 - G3. Keep memory local, encrypted, typed, and revocable, following the user rather than the application.
 - G4. Provide a minimal, transport-agnostic envelope for agent-to-agent task hand-off.
 - G5. Make first use short: check environment, scaffold, ask, package, run.
+- G6. Adoption is free for someone who already keeps an agent as plain files: no format change, no lock-in, no requirement on other tools (§2.1, §6.7).
 
 ### Non-goals (v0.1)
 - Hosting, a registry, or a marketplace.
@@ -122,7 +155,7 @@ The signature envelope is cosign-shaped JSON: `critical.identity`, `critical.typ
 
 ### 6.4 Skills graph
 
-`skills/graph.json` holds `skills[]` with `name`, `description`, `inputs`, `outputs`, `requires[]`, and an optional `impl` (`type`: wasm|python|js|md, `entry`: path). Packaging fails if a skill requires an unknown skill or if the graph has a cycle.
+`skills/graph.json` holds `skills[]` with `name`, `description`, `inputs`, `outputs`, `requires[]`, and an optional `impl` (`type`: wasm|python|js|md, `entry`: path). Packaging fails if a skill requires an unknown skill or if the graph has a cycle. Only `md` skills have any run-time effect: the runtime attaches each one's name and markdown to the system prompt, in graph order (bounded, §6.6). There is no execution path for any skill type; `wasm`, `python` and `js` implementations are declared, digested and signed, not run.
 
 ### 6.5 Tool bindings and sandbox spec
 
@@ -138,10 +171,87 @@ The markdown workflow is the front end of the pipeline, not a separate format. A
 my-agent/
 ├── AGENT.md         persona / system prompt (used as persona.systemPrompt)
 ├── skills/*.md      one skill per file; optional front-matter: name, description, requires
-└── MEMORY.md        your notes; NOT packaged (see below)
+└── MEMORY.md        the agent's long-term memory (preferences, facts, decisions, failures); NOT packaged (see below)
 ```
 
-The runtime generates `manifest.json`, `skills/graph.json` (each skill file is the skill's `impl`, type `md`), `tools/bindings.json`, `sandbox.json` and `memory-schema.json` with defaults. The user's markdown files are digested, signed and packed as written and are never modified. At run time an `md` skill is instruction text: the runtime attaches its content (bounded, 8 KiB per skill and 32 KiB in total) to the system prompt, with the same trust as the persona because it is inside the signed archive. Skills with other `impl` types are declared only and are not executed. Re-running `loomwork package` in a folder-built agent re-reads `skills/*.md`, so a skill added after `init` is packaged; `loomwork init --force` regenerates the whole scaffold. `package` warns about any `skills/*.md` the manifest does not list. `MEMORY.md` is deliberately excluded from the archive, the digests and the signature: memory content never travels inside an ACI (§8.3), and `init`/`package` print a notice saying so. It creates no records.
+The runtime derives `manifest.json`, `skills/graph.json` (each skill file is the skill's `impl`, type `md`), `tools/bindings.json`, `sandbox.json` and `memory-schema.json` with defaults. The user's markdown files are digested, signed and packed as written and are never modified. At run time an `md` skill is instruction text: the runtime attaches its content (bounded, 8 KiB per skill and 32 KiB in total) to the system prompt, with the same trust as the persona because it is inside the signed archive. Skills with other `impl` types are declared only and are not executed. `MEMORY.md` is deliberately excluded from the archive, the digests and the signature: memory content never travels inside an ACI (§8.3), and `init`/`package` print a notice saying so. It creates no records.
+
+**Two modes.**
+
+- **Coexistence mode (the default).** `loomwork package` in a plain folder builds the manifest and the generated files in a temporary directory outside the folder and writes only the `.aci` and its sidecars (`<name>.slsa.json`, `<name>.aci.attestation.json`) into it. No JSON file is created in the folder, so there is no manifest to go stale: every run re-reads `AGENT.md` and `skills/*.md`, and a skill added since the last package is packed. The folder is the agent's identity; memory, keys and trust live in `~/.loomwork`.
+- **Native mode (opt-in).** `loomwork init` in a plain folder materializes `manifest.json`, `skills/graph.json`, `tools/bindings.json`, `sandbox.json` and `memory-schema.json` in the folder (and says so). Those files are then yours to edit, and `package` uses them. In native mode `package` refreshes `skills/graph.json` from `skills/*.md` for a folder-built agent, and warns, naming the files (first 10, then "and N more"), about any regular file the manifest does not cover and will therefore not pack. Hidden entries, archives and sidecars, and `MEMORY.md` are not reported. The exit code is unchanged. `loomwork init --force` regenerates the scaffold.
+
+The exit path is `loomwork leave` (§8.4): the folder is byte-identical to before Loomwork was used, memory is exported, and the conventional workflow still works.
+
+### 6.7 Portable agent folder: Tier 0 and Tier 1 (planned)
+
+*Status: design only; see R-29 to R-38 in §12.*
+
+**Two problems, one folder.** Two different needs are easy to confuse:
+
+- **A. "My agent should follow me across tools."** Instructions, skills, memory, current work and handoff state move between harnesses and machines. Nothing here needs a new runtime, container format or protocol; a shared folder is enough.
+- **B. "Run an agent someone else made, safely."** This needs a signed package, an enforced sandbox and per-record consent. That is the ACI (§6.1 to §6.5) and the runtime.
+
+Loomwork treats the folder as the source of truth for both. The same folder can be used at three tiers, and moving up a tier never restructures it:
+
+| Tier | Contents | Needs Loomwork? | Gives you |
+|---|---|---|---|
+| **0: Folder** | The layout below | No | Portability: any harness that reads markdown can use it |
+| **1: Sealed** | Tier 0 plus `manifest.json` and `state/journal.jsonl` | Only to seal and check | Integrity and history: tampering and half-finished writes are detected |
+| **2: Packaged** | Tier 1 plus signature, sandbox spec, consent (the ACI) | Yes | Distribution to other people (§6.1 to §6.5) |
+
+This section specifies Tiers 0 and 1. Tier 2 is the existing ACI, used when an agent is handed to someone else.
+
+#### Tier 0: the folder
+
+Layout (extends the plain-folder input of §6.6):
+
+```
+.agent/
+├── AGENT.md                 persona / system prompt
+├── skills/
+│   ├── research/SKILL.md    one skill per directory (skills/*.md files remain accepted)
+│   ├── coding/SKILL.md
+│   └── review/SKILL.md
+└── state/
+    ├── MEMORY.md            long-term memory: preferences, facts, decisions, known-bad approaches
+    └── HANDOFF.md           where things stand, for the next agent
+```
+
+**What `MEMORY.md` is.** It is the agent's long-term memory: the durable things it should know at the start of every session (preferences, facts about the user and their work, decisions, known-bad approaches). It is not the conversation log (the raw layer of §8), not current work (that is `HANDOFF.md`), and not a template. In the two-layer model of §8 it is the *trusted layer*, and it is read into every session, so an unreviewed agent edit to it is exactly a write to trusted memory without approval. It holds the same kinds of content as the typed records of §8.2 (preference, belief, failure, episode summaries), in prose, without their provenance, consent, retention or revocation. Whether and how the two are joined is open question 10.
+
+Rules:
+
+1. **Plain files only.** Every file is UTF-8 markdown. No Loomwork binary is needed to read or write a Tier 0 folder.
+2. **Bootstrap.** Each harness gets a short instruction in the file it already reads (for example `CLAUDE.md` or `AGENTS.md`): read `.agent/AGENT.md`, load the skills that apply, read `state/MEMORY.md` and `state/HANDOFF.md`, and follow the write rules below. `loomwork bootstrap <harness>` generates these files; they are text a person can also write by hand.
+3. **Write rules for state.** An agent updates `HANDOFF.md` when it stops or hands off, and never overwrites `MEMORY.md` directly: it adds a proposal (below).
+4. **`HANDOFF.md` schema.** Front-matter (`writer`, `time`, `previous`) followed by fixed sections: *Done*, *Changed*, *To do*, *Don't repeat*, *Artifacts*, *Decisions*, *For the next agent*. A missing section is allowed; unknown sections are ignored.
+5. **Memory proposals.** A harness proposes a change to memory by writing `state/pending/<id>.md` (front-matter with `writer`, `time`, `target`; the body is the proposed addition or edit). A proposal is not memory. The user reviews it (`loomwork memory review`, or by hand: move the text into `MEMORY.md` and delete the file). This is the pending model of §8.2 applied to markdown: pending files expire after the pending TTL and are limited per writer by the pending cap (R-24).
+6. **Trust of context.** Content in `state/` is data written by several parties, some of them agents, and may carry prompt injection. The bootstrap tells the agent to treat agent-written lines as claims to check, not as instructions. Lines the user wrote have no such caveat.
+7. **Memory does not travel in an ACI.** Consistent with §8.3, `state/` is excluded when a Tier 2 package is built. Moving your own agent between your own machines is not distribution: the whole folder, `state/` included, goes with you.
+
+#### Tier 1: sealed
+
+Tier 1 adds integrity and history without keys or a runtime service.
+
+1. **`manifest.json`** lists every file in the folder with its SHA-256 digest, in the format of §6.2, using the same canonical form (§6.3). Files under `state/` are listed but expected to change; see the journal.
+2. **`state/journal.jsonl`** is an append-only log. Each line records `time`, `writer` (a name the writer chooses; not authenticated), `source` (`user`, `agent` or `sync`), `file`, `digest` (of the file after the change) and `previous` (the digest of the previous journal line). A line's own digest is what the next line names as `previous`, which chains the log.
+3. **Atomic writes.** `loomwork state write <file>` writes to a temporary file in the same directory, fsyncs it, checks the digest of what was written, renames it over the old file, fsyncs the directory, then appends the journal line. A crash at any point leaves either the old file or the new one, never a partial file; a journal line missing after a crash is reported by `check` and can be repaired with `loomwork state reconcile`.
+4. **Commands.**
+   - `loomwork seal`: recompute the manifest and append journal lines for changes made outside Loomwork (recorded with `source: user` or `sync`, as chosen).
+   - `loomwork check`: exit non-zero if a non-state file differs from the manifest, a state file differs from the latest journal digest, the chain is broken, or a skill directory is not listed.
+   - `loomwork state at <time>`: reconstruct the state at that time (requires each journal line to carry a reference to a stored copy; see the open question in §13).
+   - `loomwork doctor --folder`: `check`, plus warnings for secret-looking content in `MEMORY.md`, a `HANDOFF.md` older than a chosen age, oversized state files, and unlisted skills.
+5. **Handoff receipts.** An agent that reads `HANDOFF.md` records the digest it read in the journal (`source: agent`). This lets the user show which state each run started from.
+6. **Sync.** The folder is ordinary files, so Git, Syncthing or any file sync works. A merge conflict in `state/` is resolved by hand, then `loomwork seal` records the result as `source: sync`. Two journals that share a prefix and diverge are reported by `check`; the tool does not merge them.
+
+**What Tier 1 does and does not prove.**
+
+- The hash chain is *tamper-evident*: an edit to a past state file or journal line is detected by `check`.
+- It is not *tamper-proof*: anyone who can write the folder can rewrite the whole chain from an earlier point. Stronger provenance comes from signed Git commits, or from Tier 2 signatures.
+- `writer` is a label, not an identity (compare §9.6).
+- A harness that ignores the bootstrap is not stopped by Tier 1; `check` shows afterwards what changed.
+- Tier 1 does not sandbox anything. Enforcement of files, network and consent remains a Tier 2 and runtime matter (§7.2.1, §9.4).
 
 ## 7. Runtime
 
@@ -150,16 +260,17 @@ The runtime generates `manifest.json`, `skills/graph.json` (each skill file is t
 | Command | Behaviour |
 |---|---|
 | `loomwork doctor` | Checks Ollama reachability and installed models, signing key, memory store, workspace, spec version |
-| `loomwork init [dir]` | Scaffolds a valid agent with computed digests. In a plain folder (§6.6) it generates the manifest around the user's own files |
+| `loomwork init [dir]` | Scaffolds a valid agent with computed digests. In a plain folder (§6.6) it materializes the manifest and generated files around the user's own files (native mode) |
 | `loomwork ask "q" [--folder d]` | Indexes a folder through the agent's tool bindings and sandbox (listing plus small non-secret text samples) and answers with the local model |
 | `loomwork keygen [--out f]` | Generates an Ed25519 key (PKCS#8 PEM, mode 0600) and public key, and trusts it |
 | `loomwork trust list\|add\|remove` | Manages the keys whose signatures are accepted |
-| `loomwork package [--out f] [--signing-key f]` | Recomputes digests, checks the skills graph, signs, packs only the files the manifest lists, writes a signed provenance statement and a signed attestation bound to the archive |
+| `loomwork package [--out f] [--signing-key f]` | Recomputes digests, checks the skills graph, signs, packs only the files the manifest lists, writes a signed provenance statement and a signed attestation bound to the archive. In a plain folder it writes nothing else into the folder (§6.6) |
 | `loomwork verify f.aci` | Checks digests, manifest schema, skills graph, signature, that the signer is trusted, and the provenance statement; exits non-zero on failure |
 | `loomwork run [flags] f.aci` | Loads and runs an ACI: single task (`--input`) or interactive prompt |
 | `loomwork receipt f.aci [--verify]` | Prints or verifies the attestation (signature and archive digest) |
 | `loomwork amp token\|serve\|delegate` | Issues capability tokens, serves `amp/delegate` on stdio, delegates a task to a peer |
-| `loomwork memory …` | Typed-memory management (§8.2) |
+| `loomwork memory …` | Typed-memory management (§8.2), including `import` and `export` (§8.4) |
+| `loomwork leave [--export f] [--delete-store] [--yes]` | Exports memory, lists what Loomwork kept, optionally deletes the memory store (§8.4) |
 | `loomwork version` | Prints version |
 
 Flags may appear before or after positional arguments. `loomwork init` refuses to overwrite an existing agent without `--force`.
@@ -239,6 +350,17 @@ Lifecycle (statuses: pending, active, superseded, revoked, rejected):
 ### 8.3 Ownership decision for v0.1
 
 The user's machine owns the store. An ACI carries only a memory *schema*; memory content never travels inside an ACI.
+
+### 8.4 Import, export and leaving
+
+The user's markdown file is an interface, one direction at a time: import reads a file into pending records; export writes active records out. There is no sync, no round-trip writing, and `MEMORY.md` is never rewritten.
+
+- **`loomwork memory import <file.md> [--kind K] [--sensitivity S] [--allow-agent a,b] [--public]`** reads a file and creates records through the reviewer path. Every imported record is `pending`; nothing is ever activated by import. Two shapes are accepted: (1) the export format below, which restores kind, sensitivity, provenance and consent from its front-matter (new IDs are generated); (2) plain markdown, split on `## ` headings outside code fences, one record per section, kind `belief` (or `--kind`), sensitivity `low`, provenance source `imported`, consent closed to the user alone unless `--allow-agent` or `--public` is given (these flags apply to plain files only). Text before the first `##` is not imported; a file with no `##` sections is an error. The source file is only read: never written, renamed or deleted; symlinks and stdin are refused (a file path is required). **There is no deduplication:** importing the same file twice creates the records twice.
+- **`loomwork memory export [--out FILE] [--force]`** emits active records only (not pending, revoked, superseded or expired), to stdout or to FILE (suggested name `memory-export.md`). `--out` refuses to overwrite an existing file without `--force`, and refuses `MEMORY.md` as a target always, even with `--force` or through a symlink.
+- **Export format.** One block per record: YAML-style front-matter (`kind`, `id`, `created`, `sensitivity`, `provenance.writer`, `provenance.source`, optional `provenance.aci` and `provenance.sourceUri`, `consent` as `public`, `restricted` or `private` with `consent.allowedAgents` and `consent.allowedScopes` lists, and the typed `payload` as one line of JSON), then the content as markdown. Consent is rendered as fields, not flattened into prose. The format round-trips through import: kind, content, sensitivity, provenance and consent survive export → import → approve → export unchanged, apart from `id` and `created`. It does not preserve IDs, retention, status, derivative links, or the evidence, parent and input references that name other records' old IDs (they are dropped on import); a `created` value becomes the imported record's provenance time. Lossless by convention, not by guarantee: the front-matter is the contract.
+- **`loomwork leave [--export FILE] [--delete-store] [--yes]`** is the one-step exit. With `--export` it performs the export above (same refusals) and reports the record count. It prints an inventory: the memory store path and key path (resolved from `$HOME`, not hardcoded), any `*.aci` in the current directory, and that Loomwork never modified the folder's own files. `--delete-store` deletes the memory database, its salt and its key file, and nothing else; the signing key and trust list are kept. Without `--export`, `--delete-store` prints a warning and does nothing unless `--yes` is also given. The store also holds conversation history, which is deleted with it and not exported.
+
+**Contract.** (1) No Loomwork command edits, renames or deletes a file the user wrote (`AGENT.md`, `skills/*.md`, `MEMORY.md`). (2) The folder holds identity; `~/.loomwork` holds state. (3) After `leave`, the folder is byte-identical to before, memory is exported, and the conventional workflow still works. (4) The file is the interface, one direction at a time. R-39 is the CI test of rules 1 to 3.
 
 ## 9. Security model
 
@@ -324,11 +446,24 @@ Credit: an append-only JSONL receipt log (`CreditReceipt` with payer, payee, bre
 | R-21 | Run a named built-in agent (`loomwork run research`) | Not implemented |
 | R-22 | Tool execution through MCP servers | Not implemented |
 | R-23 | Keyless signing / transparency log | Not implemented |
-| R-24 | Pending records expire (default 7 days) and each writer has a pending cap (default 50) | Implemented (agent views; reviewer exempt) |
+| R-24 | Pending records expire (default 7 days, clamped so a writer's own longer TTL cannot outlive it) and each writer has a pending cap (default 50) | Implemented. Reachable through `loomwork memory propose --as-agent <name>` and the runtime's agent views (`run`/`ask`); the CLI's default reviewer path is exempt |
 | R-25 | Pending count shown in the post-answer status line | Implemented |
-| R-26 | Opt-in write-gate: proposals staged outside the record store until approved | Implemented (env `LOOMWORK_WRITE_GATE`; off by default) |
-| R-27 | Plain folder (`AGENT.md`, `skills/*.md`) accepted by `init` and `package`; `MEMORY.md` is never packed | Implemented |
+| R-26 | Opt-in write-gate: proposals staged outside the record store until approved | Implemented (env `LOOMWORK_WRITE_GATE`; off by default). Applies to agent-view proposals: `memory propose --as-agent <name>` and the runtime's agent views; the default reviewer path is never gated |
+| R-27 | Plain folder (`AGENT.md`, `skills/*.md`) accepted by `init` and `package`; `MEMORY.md` is never packed; `package` writes only the archive and its sidecars, `init` is the opt-in native mode (§6.6) | Implemented |
 | R-28 | Conversation entries capped or covert-channel-resistant | Not implemented (documented limit, §9.6) |
+| R-29 | Tier 0: `.agent/` layout (`AGENT.md`, `skills/*/SKILL.md`, `state/MEMORY.md`, `state/HANDOFF.md`) accepted by `init` and `package` | Not implemented (flat `AGENT.md` and `skills/*.md` only, R-27) |
+| R-30 | `loomwork bootstrap <harness>` writes the harness's instruction file | Not implemented |
+| R-31 | `HANDOFF.md` schema validated and stamped by `loomwork handoff` | Not implemented |
+| R-32 | Memory proposals as `state/pending/*.md` with TTL and cap, reviewed by `loomwork memory review` | Not implemented |
+| R-33 | Tier 2 packaging excludes `state/` | Partial (`MEMORY.md` is excluded today, R-27; `HANDOFF.md` and `state/` are not yet defined) |
+| R-34 | Tier 1: `seal` writes `manifest.json` for the whole folder | Not implemented |
+| R-35 | Tier 1: atomic `state write` (temp file, fsync, verify, rename) | Not implemented |
+| R-36 | Tier 1: hash-chained `state/journal.jsonl`, checked by `loomwork check` | Not implemented |
+| R-37 | Handoff receipts recorded in the journal | Not implemented |
+| R-38 | `loomwork doctor --folder` | Not implemented |
+| R-39 | Byte-identical lifecycle: package, import, propose (agent, one write-gated), approve, export, `leave --export --delete-store` leave the user's files unchanged and add only the archive, its sidecars and the export files | Implemented (Go test `TestByteIdenticalLifecycle`, runs the built binary with a temporary `HOME`; part of `go test ./...`) |
+| R-40 | `loomwork leave [--export FILE] [--delete-store]` exports memory, prints an inventory and deletes only the memory store, never without an export or `--yes` | Implemented (`TestByteIdenticalLifecycle`, `TestLeaveDeleteStoreNeedsExportOrYes`) |
+| R-41 | `loomwork memory import` (pending-only, no dedup) and `export` (active-only, never `MEMORY.md`) with a round-tripping front-matter format (§8.4) | Implemented (memory-package round-trip tests; CLI tests) |
 
 ## 13. Open design questions
 
@@ -338,11 +473,16 @@ Credit: an append-only JSONL receipt log (`CreditReceipt` with payer, payee, bre
 4. **Enforcement layer.** In-process checks today; when are OS mechanisms (namespaces, seccomp, WASM) required for sandbox and tool scope?
 5. **Minimum AMP surface.** Whether delegate and report are enough for useful interoperability, or whether a handshake and cancel are needed.
 6. **Write-gate default.** Should the write-gate become the default once agents write typed records themselves, given that the writer then cannot read back its own proposal?
-7. **Day-one path.** How a first run gets a model and a starter agent with no manual steps, without adding accounts or configuration.
+7. **Journal storage.** For `state at <time>`, does the journal store a copy of each state file, store a diff, or rely on Git for history? Storing copies grows the folder; relying on Git makes Tier 1 depend on it.
+8. **Harness adapters.** Which harnesses does the project test against, and who maintains those adapters when a harness changes how it reads instructions? An optional MCP server (`read_handoff`, `write_handoff`, `propose_memory`) would give tool-capable harnesses atomic, journaled writes; it is not specified here.
+9. **Trust labels.** Should the runtime mark each line of loaded state by provenance (user-written, agent-written, pending) in the prompt, and how should a harness without Loomwork approximate that?
+10. **Two forms of long-term memory.** `MEMORY.md` and the typed records of §8.2 hold the same layer. Which is the source of truth: `MEMORY.md` rendered from active typed records (so lines gain provenance and revocation, and a hand edit becomes a proposal), typed records imported from approved `MEMORY.md` lines, or a sidecar that attaches an envelope (writer, time, retention) to each line? Revocation of a line cannot cascade to summaries derived from it unless those are tracked.
+11. **Day-one path.** How a first run gets a model and a starter agent with no manual steps, without adding accounts or configuration.
 
 ## 14. Roadmap
 
 - **Now:** publish the v0.1 spec and reference runtime; gather reports of real first-run times and failures.
+- **Next (portable folder):** Tier 0 (layout, `bootstrap`, handoff schema, memory proposals), then Tier 1 (atomic writes, `seal`, journal, `check`, `doctor --folder`), then harness adapters and a cold-start test per supported harness. Tier 0 is built first: it removes the need for any harness to support Loomwork, and Tier 1 is only worth its habit cost once people use Tier 0.
 - **Next:** built-in starter agents and a model-pull step for a true one-command first run; MCP tool execution behind the existing bindings and sandbox; OS-level isolation.
 - **Later:** key distribution or keyless signing, additional AMP transports, link conversation memory to the derivatives graph, independent build attestation, optional settlement.
 

@@ -144,7 +144,11 @@ func (v *View) Get(id string) (*Record, error) {
 // is staged outside the record store and the writer cannot read it back.
 func (v *View) Propose(r *Record) error {
 	r.Status = StatusPending
-	r.Provenance.WriterAgentID = v.agentID
+	// An agent view always stamps its own identity. The reviewer view keeps a
+	// writer the record already carries, so an import can restore provenance.
+	if !v.canApprove || r.Provenance.WriterAgentID == "" {
+		r.Provenance.WriterAgentID = v.agentID
+	}
 	if r.Provenance.WrittenAt == "" {
 		r.Provenance.WrittenAt = time.Now().UTC().Format(time.RFC3339)
 	}

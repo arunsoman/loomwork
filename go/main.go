@@ -43,6 +43,8 @@ func main() {
 		cmdKeygen(args)
 	case "memory", "mem":
 		cmdMemory(args)
+	case "leave":
+		cmdLeave(args)
 	case "doctor":
 		cmdDoctor(args)
 	case "receipt":
@@ -76,10 +78,12 @@ Usage:
   loomwork trust list|add|remove       Choose whose signatures to accept
   loomwork amp serve|token|delegate    Hand a task to another agent over stdio
 
-  loomwork memory list|get|propose|approve|revoke|graph|stats
+  loomwork memory list|get|propose|approve|revoke|graph|stats|import|export
                                        Manage typed memory (preferences, episodes,
                                        artifacts, beliefs, failures) with
                                        provenance, consent, retention, revocation
+  loomwork leave [--export FILE] [--delete-store]
+                                       Stop using Loomwork: export memory, list what it kept
   loomwork doctor                      Check your setup — one command, no config
 
   loomwork version                     Print version

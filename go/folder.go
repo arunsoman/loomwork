@@ -3,8 +3,11 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strings"
 
 	"loomwork.dev/loomwork/internal/aci"
 	"loomwork.dev/loomwork/internal/runtime"
@@ -14,7 +17,8 @@ import (
 //
 //	AGENT.md       the persona / system prompt
 //	skills/*.md    one skill per file (optional front-matter: name, description, requires)
-//	MEMORY.md      your notes; deliberately NOT packaged (memory stays on your machine)
+//	MEMORY.md      the agent's long-term memory (preferences, facts, decisions);
+//	               deliberately NOT packaged: memory stays on your machine
 //
 // `loomwork init` and `loomwork package` accept such a folder and generate the
 // manifest, skills graph, bindings, sandbox and memory schema around it. The
@@ -31,25 +35,82 @@ func isPlainFolder(dir string, force bool) bool {
 	return err == nil && info.Mode().IsRegular()
 }
 
-// scaffoldFromFolder generates the ACI files for a plain folder.
-func scaffoldFromFolder(dir string) error {
+// buildFolderManifest is the one place a plain folder is turned into an agent:
+// it parses skills/*.md and generates the manifest, skills graph, bindings,
+// sandbox and memory schema into target. The user's markdown is only read.
+//
+// With target == dir (`loomwork init`, native mode) the generated files land in
+// the folder. With any other target (`loomwork package`, coexistence mode) the
+// files the manifest references (AGENT.md, skills/*.md) are copied there first,
+// so the folder itself is never written to.
+func buildFolderManifest(dir, target string) ([]aci.SkillDef, error) {
 	skills, err := aci.SkillsFromMarkdownDir(dir)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	opts := runtime.ScaffoldOptions{PersonaPath: "AGENT.md", Skills: skills}
 	if skills == nil {
-		opts.Skills = []aci.SkillDef{}
+		skills = []aci.SkillDef{}
+	}
+	if target != dir {
+		files := []string{"AGENT.md"}
+		for _, sk := range skills {
+			files = append(files, sk.Impl.Entry)
+		}
+		for _, rel := range files {
+			data, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(rel)))
+			if err != nil {
+				return nil, err
+			}
+			dst := filepath.Join(target, filepath.FromSlash(rel))
+			if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
+				return nil, err
+			}
+			if err := os.WriteFile(dst, data, 0o644); err != nil {
+				return nil, err
+			}
+		}
 	}
 	abs, _ := filepath.Abs(dir)
-	if err := runtime.SaveManifest(dir, filepath.Base(abs), opts); err != nil {
-		return err
+	opts := runtime.ScaffoldOptions{PersonaPath: "AGENT.md", Skills: skills}
+	if err := runtime.SaveManifest(target, filepath.Base(abs), opts); err != nil {
+		return nil, err
 	}
+	return skills, nil
+}
+
+// printFolderNotice reports what a plain folder contained.
+func printFolderNotice(dir string, skills []aci.SkillDef) {
 	fmt.Printf("✓ Plain folder detected: AGENT.md + %d skill file(s)\n", len(skills))
 	if _, err := os.Stat(filepath.Join(dir, "MEMORY.md")); err == nil {
 		fmt.Printf("ℹ MEMORY.md is not packaged: memory never travels inside an ACI (PRD §8.3)\n")
 	}
+}
+
+// scaffoldFromFolder materializes the ACI files in the folder (native mode).
+func scaffoldFromFolder(dir string) error {
+	skills, err := buildFolderManifest(dir, dir)
+	if err != nil {
+		return err
+	}
+	printFolderNotice(dir, skills)
 	return nil
+}
+
+// stageFolder builds the generated agent files for a plain folder in a
+// temporary directory outside it (coexistence mode). The caller removes the
+// returned directory.
+func stageFolder(dir string) (string, error) {
+	stage, err := os.MkdirTemp("", "loomwork-stage-")
+	if err != nil {
+		return "", err
+	}
+	skills, err := buildFolderManifest(dir, stage)
+	if err != nil {
+		os.RemoveAll(stage)
+		return "", err
+	}
+	printFolderNotice(dir, skills)
+	return stage, nil
 }
 
 // isFolderAgent reports whether dir's manifest was generated from a plain
@@ -88,14 +149,56 @@ func refreshFolderSkills(dir string) error {
 	return nil
 }
 
-// warnUnlistedSkills tells the user about skills/*.md files the manifest does
-// not list, which package would otherwise leave out without a word.
-func warnUnlistedSkills(dir string, digests map[string]string) {
-	matches, _ := filepath.Glob(filepath.Join(dir, "skills", "*.md"))
-	for _, m := range matches {
-		rel := "skills/" + filepath.Base(m)
-		if _, ok := digests[rel]; !ok {
-			fmt.Fprintf(os.Stderr, "⚠ %s is not in the manifest and will NOT be packaged (list it as a skill implementation in skills/graph.json)\n", rel)
-		}
+// warnUnlistedFiles tells the user about regular files in a native-mode folder
+// that the manifest does not cover and package therefore leaves out. Hidden
+// entries, archives and their sidecars, the manifest and its generated
+// signature, and MEMORY.md (deliberately never packed) are not reported.
+func warnUnlistedFiles(dir string, digests map[string]string, outPath string) {
+	skip := map[string]bool{"MEMORY.md": true, "manifest.json": true}
+	if outPath != "" {
+		skip[filepath.ToSlash(filepath.Clean(outPath))] = true
 	}
+	var stray []string
+	filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		rel, _ := filepath.Rel(dir, path)
+		rel = filepath.ToSlash(rel)
+		if rel == "." {
+			return nil
+		}
+		if strings.HasPrefix(d.Name(), ".") {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if d.IsDir() || !d.Type().IsRegular() || strings.HasPrefix(rel, "signatures/") || skip[rel] {
+			return nil
+		}
+		if strings.HasSuffix(rel, ".aci") || strings.HasSuffix(rel, ".slsa.json") || strings.HasSuffix(rel, ".attestation.json") {
+			return nil
+		}
+		if _, ok := digests[rel]; !ok {
+			stray = append(stray, rel)
+		}
+		return nil
+	})
+	if len(stray) == 0 {
+		return
+	}
+	sort.Strings(stray)
+	shown := stray
+	if len(shown) > 10 {
+		shown = shown[:10]
+	}
+	fmt.Fprintf(os.Stderr, "⚠ %d file(s) in this folder are not in the manifest and will NOT be packed:\n", len(stray))
+	for _, f := range shown {
+		fmt.Fprintf(os.Stderr, "    %s\n", f)
+	}
+	if len(stray) > len(shown) {
+		fmt.Fprintf(os.Stderr, "    and %d more\n", len(stray)-len(shown))
+	}
+	fmt.Fprintf(os.Stderr, "  (list skill files in skills/graph.json to package them, or remove the manifest to let loomwork derive everything from AGENT.md and skills/*.md)\n")
 }

@@ -42,6 +42,7 @@ func cmdInit(args []string) {
 		}
 		abs, _ := filepath.Abs(dir)
 		fmt.Printf("✓ Created manifest.json, skills/graph.json, tools/bindings.json, memory-schema.json, sandbox.json around your files\n")
+		fmt.Printf("ℹ This folder is now in native mode: those files are yours to edit. (Without init, `loomwork package` in a plain folder no longer writes any files besides the archive.)\n")
 		fmt.Printf("\nNext: cd %s && loomwork package --out %s.aci\n", dir, filepath.Base(abs))
 		return
 	}

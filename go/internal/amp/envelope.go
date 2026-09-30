@@ -159,7 +159,7 @@ func ProvenanceFor(archive *aci.Archive, rawACI []byte, sk *aci.SigningKey) *Pro
 	p := &Provenance{
 		ACI:       "loomwork.dev/" + archive.Manifest.Metadata.Name + "@" + archive.Manifest.Metadata.Version,
 		ACIDigest: aci.Sha256Bytes(rawACI),
-		Runtime:   "loomwork-go/0.1.0",
+		Runtime:   "loomwork-go/0.1.2",
 		Signer:    sk.KeyID,
 	}
 	p.Signature = base64.StdEncoding.EncodeToString(ed25519.Sign(sk.Priv, p.payload()))

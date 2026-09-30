@@ -28,9 +28,16 @@ func newCLIEnv(t *testing.T, bin, ollamaURL string) *cliEnv {
 
 func (e *cliEnv) run(dir string, stdin string, args ...string) (string, string, int) {
 	e.t.Helper()
+	return e.runEnv(dir, nil, stdin, args...)
+}
+
+// runEnv is run with extra environment entries (KEY=value).
+func (e *cliEnv) runEnv(dir string, extra []string, stdin string, args ...string) (string, string, int) {
+	e.t.Helper()
 	cmd := exec.Command(e.bin, args...)
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "HOME="+e.home, "OLLAMA_URL="+e.url, "OLLAMA_MODEL=", "LOOMWORK_MEMORY_PASSPHRASE=")
+	cmd.Env = append(cmd.Env, extra...)
 	cmd.Stdin = strings.NewReader(stdin)
 	var so, se bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &so, &se

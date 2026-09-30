@@ -786,3 +786,71 @@ func TestWriteIsAtomic(t *testing.T) {
 		t.Fatal("a failed write must not leave the record behind")
 	}
 }
+
+// WI-1 acceptance: an agent's own 10-year TTL cannot outlive the pending TTL,
+// the sweep tombstones it, and approval restores the writer's TTL.
+func TestPendingClampSweepAndApproval(t *testing.T) {
+	const tenYears = 315360000
+	path := filepath.Join(t.TempDir(), "clamp.db")
+	s, err := OpenStore(path, "pw")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lim := Limits{PendingTTL: 2 * time.Second}
+	agent := NewViewOpts(s, "agent_a", nil, Options{Limits: lim})
+
+	expiring := prefRecord("expiring")
+	expiring.Retention = Retention{Mode: "ttl", TTLSeconds: tenYears}
+	kept := prefRecord("kept")
+	kept.Retention = Retention{Mode: "ttl", TTLSeconds: tenYears}
+	if err := agent.Propose(expiring); err != nil {
+		t.Fatal(err)
+	}
+	if err := agent.Propose(kept); err != nil {
+		t.Fatal(err)
+	}
+
+	// Reviewer proposals are not clamped.
+	rev := prefRecord("reviewer")
+	rev.Retention = Retention{Mode: "ttl", TTLSeconds: tenYears}
+	if err := NewReviewerView(s).Propose(rev); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.Get(rev.ID); got.Retention.PendingTTL || got.Retention.TTLSeconds != tenYears {
+		t.Fatalf("reviewer proposal must not be clamped: %+v", got.Retention)
+	}
+
+	time.Sleep(1 * time.Second)
+	if err := NewReviewerView(s).Approve(kept.ID); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.Get(kept.ID)
+	if got.Status != StatusActive || got.Retention.Mode != "ttl" || got.Retention.TTLSeconds != tenYears || got.Retention.PendingTTL {
+		t.Fatalf("approved record should carry the writer's TTL: %+v", got)
+	}
+	if exp, _ := time.Parse(time.RFC3339, got.Retention.ExpiresAt); time.Until(exp) < 9*365*24*time.Hour {
+		t.Fatalf("restored expiry should be ~10y from approval, got %s", got.Retention.ExpiresAt)
+	}
+
+	time.Sleep(2500 * time.Millisecond)
+	s.Close()
+	s, err = OpenStore(path, "pw") // the sweep runs on open
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+
+	gone, _ := s.Get(expiring.ID)
+	if gone.Status != StatusRevoked || gone.Preference != nil {
+		t.Fatalf("clamped pending record should be tombstoned by the sweep: %+v", gone)
+	}
+	if emb, _, _ := s.GetEmbedding(expiring.ID); emb != nil {
+		t.Fatal("embedding should be deleted")
+	}
+	if k, _ := s.Get(kept.ID); k.Status != StatusActive || k.Preference == nil {
+		t.Fatalf("approved record must survive the sweep: %+v", k)
+	}
+	if r, _ := s.Get(rev.ID); r.Status != StatusPending || r.Preference == nil {
+		t.Fatalf("reviewer record must survive the sweep: %+v", r)
+	}
+}

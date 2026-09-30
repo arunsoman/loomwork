@@ -133,7 +133,7 @@ func BuildSLSAAttestation(m *Manifest, archiveDigest string, sourceRepo string) 
 					BuildHost:       host,
 					BuildUser:       user,
 					BuildTime:       now,
-					LoomworkVersion: "0.1.0",
+					LoomworkVersion: "0.1.2",
 				},
 			},
 			BuildConfig: SLSABuildConfig{

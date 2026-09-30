@@ -111,7 +111,7 @@ func MemoryPassphrase(home string) (string, error) {
 	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return "", err
 	}
-	keyPath := filepath.Join(dir, "memory.key")
+	keyPath := DefaultKeyPath(home)
 	raw, err := os.ReadFile(keyPath)
 	if os.IsNotExist(err) {
 		b := make([]byte, 32)
@@ -131,4 +131,9 @@ func MemoryPassphrase(home string) (string, error) {
 // DefaultDBPath is ~/.loomwork/memory.db.
 func DefaultDBPath(home string) string {
 	return filepath.Join(home, ".loomwork", "memory.db")
+}
+
+// DefaultKeyPath is ~/.loomwork/memory.key.
+func DefaultKeyPath(home string) string {
+	return filepath.Join(home, ".loomwork", "memory.key")
 }

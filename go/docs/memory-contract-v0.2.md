@@ -141,6 +141,41 @@ Views are read-only. Writes go through `View.Propose()`, which creates a `pendin
 
 `LOOMWORK_WRITE_GATE=1` makes agent views stage proposals in a `proposals` table instead of `records`. Staged proposals live in the `proposals` table of `~/.loomwork/memory.db`, with no derivative edges, embeddings or search entries. `loomwork memory list --status pending` shows them (marked `staged`) and `loomwork memory stats` counts them. Expired staged proposals are deleted, not hidden. Only the reviewer can list, approve (which moves the proposal into `records` as `active`) or reject (which deletes it). Tradeoff: the writer cannot read back its own proposal, so it cannot build on it before approval. Off by default.
 
+## Import and export (markdown)
+
+The user's markdown file is an interface, one direction at a time. There is no sync and no round-trip writing; `MEMORY.md` is never rewritten.
+
+**`loomwork memory import <file.md>`** reads a file into **pending** records through the reviewer path. Nothing is ever auto-activated; you approve what you want with `loomwork memory approve`. The source file is read only (never written, renamed or deleted), must be a regular file (symlinks are refused), and is given by path (no stdin).
+
+- *Export-format files* (below) restore `kind`, `sensitivity`, provenance and consent from their front-matter. New IDs are generated.
+- *Plain markdown* is split on `## ` headings (outside code fences); each section becomes one record: kind `belief` (override with `--kind`), sensitivity `low` (`--sensitivity`), provenance source `imported`, consent closed to the user alone (`--allow-agent a,b` or `--public` to open it). Text before the first `##` is not imported.
+- **No deduplication.** Importing the same file twice creates the records twice.
+
+**`loomwork memory export [--out memory-export.md] [--force]`** writes **active** records only (pending, rejected, revoked, superseded and expired records are left out), to stdout or to a file. `--out` refuses an existing file unless `--force`, and refuses `MEMORY.md` as a target always, even with `--force`.
+
+Format, one block per record:
+
+```
+---
+kind: belief
+id: mem_20260930131348_4bdaa1bd
+created: 2026-09-30T13:13:48Z
+sensitivity: low
+provenance.writer: research-bot
+provenance.source: agent_inferred
+consent: public
+consent.allowedAgents: ["user","research-bot"]
+payload: {"claim":"Agent belief A","evidence":null,"confidence":0.9}
+---
+Agent belief A
+```
+
+`consent` is `public`, `restricted` (with `consent.allowedAgents` / `consent.allowedScopes` lists) or `private` (no readers). The `payload` line is the typed record as JSON and is what import restores; the body is the same content rendered as markdown for people (a body line that is exactly `---` is written as `\---`).
+
+**Lossless by convention.** Export → import → approve → export preserves kind, content, sensitivity, provenance and consent; the front-matter is the contract. It does **not** preserve: IDs (new ones are generated), retention (imported records are `until_revoked`), status (imports are pending), timestamps other than `created` (which becomes the provenance time), and links to other records (evidence, parent and input IDs name old IDs, so they are dropped). Conversation history is not exported.
+
+**`loomwork leave [--export FILE] [--delete-store] [--yes]`** is the exit: it exports as above, prints where Loomwork keeps things, and with `--delete-store` deletes the memory database, its salt and its key and nothing else. Without `--export`, `--delete-store` does nothing unless you add `--yes`.
+
 ## Limits: covert channel
 
 A writer can see its own pending records and its own replayed conversational entries, so a compromised agent can use them to hold data or signal across sessions (contents, timing, volume; between ACIs that share a name). TTL, cap, the visible pending count and the write-gate narrow this and make it visible; they do not remove it. Conversational entries are not capped.

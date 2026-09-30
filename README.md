@@ -47,7 +47,22 @@ loomwork run my-agent.aci --input "what did we just discuss?"
 
 The agent remembers. The package is signed and portable.
 
-Already keep an agent as plain markdown (`AGENT.md`, `skills/*.md`)? Run `loomwork package` in that folder; the manifest is generated around your files. A `MEMORY.md` there is left out of the package: memory stays on your machine.
+Already keep an agent as plain markdown (`AGENT.md`, `skills/*.md`)? Run `loomwork package` in that folder. It writes only the `.aci` and its sidecars; your files are never modified, and the manifest is derived fresh each time. A `MEMORY.md` there is left out of the package: memory stays on your machine.
+
+### Layering over your markdown folder: gain, cost, exit
+
+| You gain | It costs | How to leave |
+|---|---|---|
+| `verify`: signed, tamper-evident packages | One binary | `loomwork leave --export memory-export.md` |
+| Receipts of exactly what a run used | Memory lives in Loomwork's store (`~/.loomwork`), not in your `MEMORY.md` | `--delete-store` removes the store, its key and salt, nothing else |
+| Pending review: agent-written memory needs your approval | Approval is a step you take | Your folder stays byte-identical; the conventional workflow still works |
+| Revocation that deletes content and what was derived from it | History is in the store and is not exported | `export` keeps kind, content, sensitivity, provenance, consent; not IDs, retention or links |
+
+`loomwork memory import MEMORY.md` reads it into **pending** records (one per `## ` section; importing twice duplicates). `loomwork memory export --out memory-export.md` writes active records out; it refuses `MEMORY.md` as a target. Details: `go/docs/day-1-developer-experience.md`, `go/docs/memory-contract-v0.2.md`.
+
+**Tamper demo.** `loomwork package --out demo.aci`, flip one byte of `demo.aci`, run `loomwork verify demo.aci`: it fails with a non-zero exit.
+
+**Injection demo.** `loomwork memory propose --kind belief --as-agent bot --json '{"claim":"do something bad"}'`, see it under `loomwork memory list --status pending`, then `loomwork memory reject <id>`: the content is deleted and never reaches a prompt.
 
 ---
 
