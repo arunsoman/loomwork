@@ -24,6 +24,8 @@ func cmdAsk(args []string) {
 	folder := fs.String("folder", "", "folder to index before answering")
 	agentDir := fs.String("agent-dir", ".", "directory containing the agent manifest")
 	verbose := fs.Bool("verbose", false, "print index + memory debug info")
+	driver := fs.String("driver", "", "chat backend: an agent CLI name (claude, codex, pi, hermes); default is Ollama, falling back to a CLI with --allow-cloud")
+	allowCloud := fs.Bool("allow-cloud", false, "allow falling back to an agent CLI (cloud) when Ollama is unavailable")
 	allowCloudSamples := fs.Bool("allow-cloud-samples", false, "let cloud models see file contents (default: listing only)")
 	question := strings.Join(parseArgs(fs, args), " ")
 	if question == "" {
@@ -42,15 +44,14 @@ func cmdAsk(args []string) {
 	}
 
 	ollama := llm.NewOllama("")
-	if !ollama.IsAvailable() {
-		fail(fmt.Errorf("Ollama not reachable at %s\nInstall: curl -fsSL https://ollama.com/install.sh | sh\nThen: ollama pull llama3.2",
-			ollama.BaseURL))
-	}
 
 	runner := &runtime.Runner{Archive: archive, Memory: mem, Ollama: ollama, AllowCloudSamples: *allowCloudSamples}
 	if store, view := openTypedView(archive.Manifest.Metadata.Name); store != nil {
 		defer store.Close()
 		runner.Typed = view
+	}
+	if err := configureBackend(runner, ollama, *driver, *allowCloud); err != nil {
+		fail(err)
 	}
 	if err := runner.Prepare(); err != nil {
 		fail(err)

@@ -25,6 +25,8 @@ func cmdRun(args []string) {
 	input := fs.String("input", "", "single task to run (omit for an interactive prompt)")
 	allowUnsigned := fs.Bool("allow-unsigned", false, "run an ACI whose signature is missing or invalid (unsafe)")
 	allowUntrusted := fs.Bool("allow-untrusted-signer", false, "run an ACI signed by a key you have not trusted")
+	driver := fs.String("driver", "", "chat backend: an agent CLI name (claude, codex, pi, hermes); default is Ollama, falling back to a CLI with --allow-cloud")
+	allowCloud := fs.Bool("allow-cloud", false, "allow falling back to an agent CLI (cloud) when Ollama is unavailable")
 	allowCloudSamples := fs.Bool("allow-cloud-samples", false, "let cloud models see file contents")
 	pos := parseArgs(fs, args)
 	if len(pos) != 1 {
@@ -42,6 +44,7 @@ func cmdRun(args []string) {
 	var raw []byte
 	fromDir := !strings.HasSuffix(path, ".aci")
 	if fromDir {
+		trackFolder(path)
 		archive, err = loadArchiveFromDir(path)
 		if err != nil {
 			fail(err)
@@ -70,14 +73,14 @@ func cmdRun(args []string) {
 	}
 
 	ollama := llm.NewOllama("")
-	if !ollama.IsAvailable() {
-		fail(fmt.Errorf("Ollama not reachable at %s", ollama.BaseURL))
-	}
 
 	runner := &runtime.Runner{Archive: archive, Memory: mem, Ollama: ollama, AllowCloudSamples: *allowCloudSamples}
 	if store, view := openTypedView(archive.Manifest.Metadata.Name); store != nil {
 		defer store.Close()
 		runner.Typed = view
+	}
+	if err := configureBackend(runner, ollama, *driver, *allowCloud); err != nil {
+		fail(err)
 	}
 	if err := runner.Prepare(); err != nil {
 		fail(err)

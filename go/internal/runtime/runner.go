@@ -25,6 +25,10 @@ type Runner struct {
 	Memory  *Memory
 	Ollama  *llm.Ollama
 
+	// Driver, if set, replaces Ollama as the chat backend (an agent CLI used
+	// when no local model is available).
+	Driver llm.Driver
+
 	// Typed, if set, supplies the user's approved typed memory (preferences,
 	// beliefs, failures visible to this agent) as context for each turn.
 	Typed *memory.View
@@ -90,7 +94,7 @@ func (r *Runner) Prepare() error {
 	if err != nil {
 		return err
 	}
-	if r.Ollama != nil {
+	if r.Ollama != nil && r.Driver == nil {
 		u, err := url.Parse(r.Ollama.BaseURL)
 		if err != nil {
 			return fmt.Errorf("model server URL: %w", err)
@@ -286,7 +290,7 @@ func (r *Runner) StatusLine() string {
 		sandbox = fmt.Sprintf("sandbox: read %s · net %s", strings.Join(r.Policy.FSRead, ","), strings.Join(r.Policy.NetEgress, ","))
 	}
 	where := "local"
-	if llm.IsCloudModel(r.Model()) {
+	if r.cloud() {
 		where = "CLOUD"
 	}
 	pending := ""
@@ -349,6 +353,10 @@ func (r *Runner) typedMemorySection() string {
 // chat sends req, moving to the next candidate model when the current one is
 // unavailable (retired or not found). Skips are reported on stderr.
 func (r *Runner) chat(ctx context.Context, req *llm.ChatRequest) (*llm.ChatResponse, error) {
+	if r.Driver != nil {
+		req.Model = r.Driver.Name()
+		return r.Driver.ChatContext(ctx, req)
+	}
 	r.resolve()
 	for {
 		req.Model = r.Model()
@@ -368,6 +376,9 @@ func (r *Runner) chat(ctx context.Context, req *llm.ChatRequest) (*llm.ChatRespo
 // Ask moves to the next candidate if the model turns out to be retired or
 // missing. Call ModelNotice afterwards for a message explaining a fallback.
 func (r *Runner) Model() string {
+	if r.Driver != nil {
+		return r.Driver.Name()
+	}
 	r.resolve()
 	if len(r.candidates) == 0 {
 		return r.Ollama.DefaultModel()
@@ -378,6 +389,9 @@ func (r *Runner) Model() string {
 // ModelNotice returns a non-empty message when the model in use differs from
 // the ACI's first preference.
 func (r *Runner) ModelNotice() string {
+	if r.Driver != nil {
+		return fmt.Sprintf("using the %s CLI (no local model); prompts go to its provider under your own login", r.Driver.Name())
+	}
 	r.resolve()
 	if len(r.candidates) == 0 {
 		return ""
@@ -403,6 +417,14 @@ func (r *Runner) resolve() {
 	// On error (nothing installed) candidates stays empty and the chat call
 	// reports the failure.
 	r.candidates, _ = r.Ollama.ResolveModels(preferred)
+}
+
+// cloud reports whether the backend in use sends prompts off this machine.
+func (r *Runner) cloud() bool {
+	if r.Driver != nil {
+		return r.Driver.Cloud()
+	}
+	return llm.IsCloudModel(r.Model())
 }
 
 // AgentID returns a stable identifier for this agent (used as memory key).
@@ -490,7 +512,7 @@ func (r *Runner) IndexFolder(folder string) (string, error) {
 		listing.WriteString("(folder too large; listing stopped early)\n")
 	}
 
-	if r.AllowCloudSamples || !llm.IsCloudModel(r.Model()) {
+	if r.AllowCloudSamples || !r.cloud() {
 		var out strings.Builder
 		for _, p := range samples {
 			data, err := os.ReadFile(p)

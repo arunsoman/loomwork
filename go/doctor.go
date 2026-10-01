@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -9,6 +10,7 @@ import (
 	"strings"
 
 	"loomwork.dev/loomwork/internal/aci"
+	"loomwork.dev/loomwork/internal/agents"
 	"loomwork.dev/loomwork/internal/llm"
 	"loomwork.dev/loomwork/internal/memory"
 )
@@ -55,6 +57,21 @@ func cmdDoctor(args []string) {
 			Message: fmt.Sprintf("not reachable at %s", ollama.BaseURL),
 			Fix:     fix,
 		})
+	}
+
+	// Agent CLIs usable as fallback drivers (their own login; Loom holds no keys).
+	if cfg, err := agents.LoadConfig(loomHome()); err == nil {
+		for _, spec := range cfg.Agents {
+			a := agents.Adapter{Spec: spec}
+			switch {
+			case !a.Available():
+				checks = append(checks, Check{Name: "agent_" + spec.Name, Status: "warn", Message: "not installed (optional driver)"})
+			case !a.Healthy(context.Background()):
+				checks = append(checks, Check{Name: "agent_" + spec.Name, Status: "warn", Message: "installed but failed its health check (" + strings.Join(spec.Probe, " ") + ")", Fix: "repair or reinstall " + spec.Name})
+			default:
+				checks = append(checks, Check{Name: "agent_" + spec.Name, Status: "ok", Message: "available as a driver"})
+			}
+		}
 	}
 
 	// Check 2: signing key

@@ -9,6 +9,7 @@ import (
 
 	"loomwork.dev/loomwork/internal/memory"
 	"loomwork.dev/loomwork/internal/secret"
+	"loomwork.dev/loomwork/internal/shadow"
 )
 
 // cmdMemoryImport: loomwork memory import <file.md>
@@ -180,6 +181,14 @@ func cmdLeave(args []string) {
 		}
 	}
 
+	if s, err := shadow.Open(home, "."); err == nil {
+		if removed, err := s.Remove(); err != nil {
+			fail(err)
+		} else if removed {
+			fmt.Printf("✓ Stopped tracking this folder: removed %s\n", s.Dir)
+		}
+	}
+
 	fmt.Println("\nWhat Loomwork keeps on this machine:")
 	fmt.Printf("  memory store: %s (typed memory and conversation history)\n", dbPath)
 	fmt.Printf("  memory key:   %s\n", keyPath)
@@ -195,7 +204,7 @@ func cmdLeave(args []string) {
 	fmt.Println("\nLoomwork never modified your files (AGENT.md, skills/*.md, MEMORY.md); your folder works as it did before.")
 
 	if !*del {
-		fmt.Println("\nNothing was deleted. To remove the store: loomwork leave --export memory-export.md --delete-store")
+		fmt.Println("\nNothing was deleted from the memory store. To remove it: loomwork leave --export memory-export.md --delete-store")
 		return
 	}
 	if *exportPath == "" && !*yes {

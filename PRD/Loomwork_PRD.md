@@ -71,7 +71,7 @@ The need Loomwork addresses is narrower: *keep exactly that workflow, and get th
 ### Non-goals (v0.1)
 - Hosting, a registry, or a marketplace.
 - Payments or settlement between agents.
-- Multi-agent orchestration beyond a single delegate/report exchange.
+- Multi-agent orchestration over the AMP wire protocol beyond a single delegate/report exchange. (Local orchestration of agent CLIs is specified in §6.8.)
 - Formal verification of agent behaviour.
 - Hardened OS-level sandboxing (see §9.4).
 
@@ -285,6 +285,22 @@ The tiers describe *what* a folder gets. This subsection says *where* the extra 
 - The promise is "removes everything Loomwork added; your own files are untouched", not "as if nothing happened": modification times, Git history and editor backup files cannot be rewound.
 - Lane A depends on the user running a command; a change made and left unread by any tool is only noticed at the next run.
 
+### 6.8 Multi-agent flow and context manager (implemented in `loomwork flow` and `loomwork tui`)
+
+Loom can coordinate agent CLIs (Claude Code, Codex, pi, Hermes) on one goal without a daemon or any API key of its own.
+
+**Agent CLIs as drivers.** Each CLI runs under the user's own login; Loom spawns it, passes a prompt, and reads stdout. It never reads or forwards credentials (`LOOMWORK_MEMORY_PASSPHRASE` is also removed from the child environment). When Ollama is unavailable, `ask`/`run` may fall back to the first healthy CLI in `~/.loomwork/agents.json`. These drivers are cloud: an automatic fallback needs `--allow-cloud` (naming `--driver` is explicit consent), and typed memory is not sent to them.
+
+**Workflow.** A named JSON file in `.agent/workflows/` orders four stages: *plan* (one agent splits the goal into modules, as validated JSON: unique safe ids, no cycles, disjoint paths), *build* (one agent per module in its own git worktree and branch, parallel up to `max_parallel`, dependents branch from already-merged work), *verify* (one or more different agents, policy `all` or `any`, plus an optional objective `test_cmd`; a rejected module is rebuilt with the issues, up to `retries`), and *ship* (an agent commits the integration branch; push happens only if the stage allows it and the user confirms). A verifier may not be the builder. Unparseable verifier output is a failure. Modules are merged into `loom/<run>` only after verification; the user's checkout is never modified.
+
+**Task board.** Tasks are JSON files under `.agent/state/tasks/`, written atomically, claimed with an atomic lock file and lease. Every stage transition records who did what.
+
+**Context manager.** For every agent invocation Loom runs a context manager that decides what to send: it selects what is relevant to the role and job (goal and repository overview for the planner; goal, dependency specs, files written by dependencies, last test output and verifier feedback for the builder; the patch and test output for the verifier), ranks it, fits it to a per-agent byte budget (truncating or, if configured, summarising; dropping the lowest priority first), and records what was sent and why in `.agent/state/context/`. Per-role and per-agent limits (`.agent/context.json`) set which kinds of context an agent may receive, which paths are hidden (default: `.env`, keys, Loom state), and the budget. Hidden paths are removed from the agent's worktree by sparse checkout.
+
+**Limits.** Visibility control is not a sandbox: an agent that runs git commands or reads outside its directory is not stopped, and agent processes run with the user's own permissions. Agent-written output is treated as data. Identity of the agent is the name Loom launched, not a cryptographic identity.
+
+**Interfaces.** `loomwork tui` (prompt in Ask or Flow mode, workflow editor, context manager view, live status) and `loomwork flow run|status|context|workflows`.
+
 ## 7. Runtime
 
 ### 7.1 Commands
@@ -302,7 +318,9 @@ The tiers describe *what* a folder gets. This subsection says *where* the extra 
 | `loomwork receipt f.aci [--verify]` | Prints or verifies the attestation (signature and archive digest) |
 | `loomwork amp token\|serve\|delegate` | Issues capability tokens, serves `amp/delegate` on stdio, delegates a task to a peer |
 | `loomwork memory …` | Typed-memory management (§8.2), including `import` and `export` (§8.4) |
-| `loomwork leave [--export f] [--delete-store] [--yes]` | Exports memory, lists what Loomwork kept, optionally deletes the memory store (§8.4) |
+| `loomwork check [dir]` | Compares a tracked folder with its last sealed state and verifies the journal chain; exits non-zero on any difference (§6.7.1) |
+| `loomwork seal [dir]` | Acknowledges the folder's current state; the only way a change becomes the new reference (§6.7.1) |
+| `loomwork leave [--export f] [--delete-store] [--yes]` | Exports memory, stops tracking the current folder, lists what Loomwork kept, optionally deletes the memory store (§8.4) |
 | `loomwork version` | Prints version |
 
 Flags may appear before or after positional arguments. `loomwork init` refuses to overwrite an existing agent without `--force`.
@@ -499,12 +517,12 @@ Credit: an append-only JSONL receipt log (`CreditReceipt` with payer, payee, bre
 | R-39 | Byte-identical lifecycle: package, import, propose (agent, one write-gated), approve, export, `leave --export --delete-store` leave the user's files unchanged and add only the archive, its sidecars and the export files | Implemented (Go test `TestByteIdenticalLifecycle`, runs the built binary with a temporary `HOME`; part of `go test ./...`) |
 | R-40 | `loomwork leave [--export FILE] [--delete-store]` exports memory, prints an inventory and deletes only the memory store, never without an export or `--yes` | Implemented (`TestByteIdenticalLifecycle`, `TestLeaveDeleteStoreNeedsExportOrYes`) |
 | R-41 | `loomwork memory import` (pending-only, no dedup) and `export` (active-only, never `MEMORY.md`) with a round-tripping front-matter format (§8.4) | Implemented (memory-package round-trip tests; CLI tests) |
-| R-42 | Lane A: running `loomwork` in a folder with `AGENT.md` keeps a shadow store under `~/.loomwork/folders/` and writes nothing into the folder | Not implemented |
-| R-43 | Lane A notice printed once per folder, non-blocking, naming the store path and `leave` | Not implemented |
-| R-44 | Lane A journals outside changes as `source: detected`; `check` compares against the last `seal` | Not implemented |
-| R-45 | Signing, `package` and capability grants beyond defaults are never automatic; verified label only for a user-created trusted key; untracked or cloned folders get default deny | Not implemented |
+| R-42 | Lane A: running `loomwork` in a folder with `AGENT.md` keeps a shadow store under `~/.loomwork/folders/` and writes nothing into the folder | Implemented for `package` and `run <dir>` (`internal/shadow`); `LOOMWORK_NO_TRACK=1` turns it off; refuses `$HOME`, `/`, folders without a regular `AGENT.md` and trees over 2000 files |
+| R-43 | Lane A notice printed once per folder, non-blocking, naming the store path and `leave` | Implemented |
+| R-44 | Lane A journals outside changes as `source: detected`; `check` compares against the last `seal` | Implemented (`loomwork check`, `loomwork seal`); the journal is hash-chained and `check` also reports a truncated or edited journal. Handoff receipts are not part of Lane A yet |
+| R-45 | Signing, `package` and capability grants beyond defaults are never automatic; verified label only for a user-created trusted key; untracked or cloned folders get default deny | Partial: nothing in Lane A signs, packages or grants anything; the verified label already needs a trusted key. Default deny for folders the user did not create is not implemented |
 | R-46 | `loomwork adopt` lists exact files, writes only after consent, records the adoption ledger; existing user files changed only by marker-delimited insertion | Not implemented |
-| R-47 | `leave` removes the shadow store and reverses the ledger only where digests still match, keeping and reporting anything edited; extends R-39 | Not implemented |
+| R-47 | `leave` removes the shadow store and reverses the ledger only where digests still match, keeping and reporting anything edited; extends R-39 | Partial: `leave` removes the shadow store of the current folder (Lane A); the ledger reversal for adopted files (Lane B) is not implemented |
 
 ## 13. Open design questions
 

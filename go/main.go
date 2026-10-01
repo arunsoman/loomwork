@@ -43,6 +43,10 @@ func main() {
 		cmdKeygen(args)
 	case "memory", "mem":
 		cmdMemory(args)
+	case "check":
+		cmdCheck(args)
+	case "seal":
+		cmdSeal(args)
 	case "leave":
 		cmdLeave(args)
 	case "doctor":
@@ -53,6 +57,10 @@ func main() {
 		cmdTrust(args)
 	case "amp":
 		cmdAmp(args)
+	case "flow":
+		cmdFlow(args)
+	case "tui":
+		cmdTUI(args)
 	case "version", "--version", "-v":
 		cmdVersion()
 	case "help", "--help", "-h":
@@ -68,6 +76,9 @@ func printUsage() {
 	fmt.Print(`loomwork — portable personal agents, single binary
 
 Usage:
+  loomwork flow run "goal"             Plan, build, verify and ship with several agent CLIs
+  loomwork tui                         Interactive UI: prompt, workflow editor, context, status
+  loomwork flow status [--watch]       Show who is doing what
   loomwork init [dir]                  Scaffold a minimal agent (default: .)
   loomwork ask "question" [--folder .] Ask your local agent about a folder
   loomwork package [--out agent.aci]   Emit a signed .aci from the current dir
@@ -82,8 +93,11 @@ Usage:
                                        Manage typed memory (preferences, episodes,
                                        artifacts, beliefs, failures) with
                                        provenance, consent, retention, revocation
+  loomwork check [dir]                 Compare a folder with the state you last sealed
+  loomwork seal [dir]                  Acknowledge a folder's current state
   loomwork leave [--export FILE] [--delete-store]
-                                       Stop using Loomwork: export memory, list what it kept
+                                       Stop using Loomwork: export memory, stop tracking
+                                       this folder, list what it kept
   loomwork doctor                      Check your setup — one command, no config
 
   loomwork version                     Print version

@@ -31,6 +31,7 @@ func cmdPackage(args []string) {
 	withSBOM := fs.Bool("with-sbom", true, "write the SBOM + structural-check attestation sidecar")
 	parseArgs(fs, args)
 	sourceDir := "."
+	trackFolder(sourceDir)
 	// buildDir is where the manifest and signature are generated. For a native
 	// folder (it has manifest.json) that is the folder itself; for a plain
 	// folder it is a temporary staging directory, so nothing but the archive
