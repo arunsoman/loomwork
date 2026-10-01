@@ -32,10 +32,14 @@ type Stage struct {
 
 // Workflow is a named pipeline definition, stored as JSON.
 type Workflow struct {
-	Name        string  `json:"name"`
-	Stages      []Stage `json:"stages"`
-	TestCmd     string  `json:"test_cmd,omitempty"` // objective gate run in each worktree, e.g. "go test ./..."
-	MaxParallel int     `json:"max_parallel,omitempty"`
+	Name    string  `json:"name"`
+	Stages  []Stage `json:"stages"`
+	TestCmd string  `json:"test_cmd,omitempty"` // objective gate run in each worktree, e.g. "go test ./..."
+	// ContextAgent is the agent that curates what each job is sent. Empty
+	// means the deterministic context manager alone. The agent only ever
+	// picks from candidates Loom offers; see curator.go.
+	ContextAgent string `json:"context_agent,omitempty"`
+	MaxParallel  int    `json:"max_parallel,omitempty"`
 }
 
 var nameRe = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$`)
@@ -120,6 +124,9 @@ func (w *Workflow) Validate(known map[string]bool) error {
 	}
 	if p, ok := w.Stage(KindShip); ok && p.Push && !seen[KindShip] {
 		return errors.New("push requires a ship stage")
+	}
+	if w.ContextAgent != "" && known != nil && !known[w.ContextAgent] {
+		return fmt.Errorf("unknown context agent %q", w.ContextAgent)
 	}
 	if w.MaxParallel < 0 || w.MaxParallel > 8 {
 		return errors.New("max_parallel must be 0-8")

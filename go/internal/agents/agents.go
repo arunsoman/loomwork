@@ -27,6 +27,9 @@ type Spec struct {
 	// ship roles). It grants the tool's own edit permission for the job's
 	// working directory only; Cmd stays read-only for chat, plan and verify.
 	Work []string `json:"work,omitempty"`
+	// Plain, if set, is the argv for jobs that must not use tools or touch
+	// files (the context curator): tools off, no session saved.
+	Plain []string `json:"plain,omitempty"`
 	// Probe is a cheap argv used to check the tool works, e.g. ["claude","--version"].
 	Probe []string `json:"probe,omitempty"`
 }
@@ -35,9 +38,9 @@ type Spec struct {
 // they can be overridden in ~/.loomwork/agents.json.
 func DefaultSpecs() []Spec {
 	return []Spec{
-		{Name: "claude", Cmd: []string{"claude", "-p"}, Work: []string{"claude", "-p", "--permission-mode", "acceptEdits"}, Stdin: true, Probe: []string{"claude", "--version"}},
-		{Name: "codex", Cmd: []string{"codex", "exec", "--sandbox", "read-only", "-"}, Work: []string{"codex", "exec", "--sandbox", "workspace-write", "-"}, Stdin: true, Probe: []string{"codex", "--version"}},
-		{Name: "pi", Cmd: []string{"pi", "-p"}, Probe: []string{"pi", "--version"}},
+		{Name: "claude", Cmd: []string{"claude", "-p"}, Work: []string{"claude", "-p", "--permission-mode", "acceptEdits"}, Plain: []string{"claude", "-p", "--tools", "", "--no-session-persistence", "--disable-slash-commands"}, Stdin: true, Probe: []string{"claude", "--version"}},
+		{Name: "codex", Cmd: []string{"codex", "exec", "--sandbox", "read-only", "-"}, Work: []string{"codex", "exec", "--sandbox", "workspace-write", "-"}, Plain: []string{"codex", "exec", "--sandbox", "read-only", "--ephemeral", "-"}, Stdin: true, Probe: []string{"codex", "--version"}},
+		{Name: "pi", Cmd: []string{"pi", "-p"}, Plain: []string{"pi", "-p", "--no-tools", "--no-session"}, Probe: []string{"pi", "--version"}},
 		{Name: "hermes", Cmd: []string{"hermes", "chat", "-q"}, Probe: []string{"hermes", "--version"}},
 	}
 }
@@ -106,6 +109,7 @@ type Job struct {
 	Prompt  string
 	Dir     string        // working directory (e.g. a git worktree)
 	Write   bool          // job may edit files: use Spec.Work when set
+	Plain   bool          // job must not use tools: use Spec.Plain when set
 	Timeout time.Duration // 0 means no limit beyond ctx
 }
 
@@ -173,6 +177,9 @@ func (a Adapter) Run(ctx context.Context, job Job) (Result, error) {
 	argv := append([]string(nil), a.Spec.Cmd...)
 	if job.Write && len(a.Spec.Work) > 0 {
 		argv = append([]string(nil), a.Spec.Work...)
+	}
+	if job.Plain && !job.Write && len(a.Spec.Plain) > 0 {
+		argv = append([]string(nil), a.Spec.Plain...)
 	}
 	if !a.Spec.Stdin {
 		argv = append(argv, job.Prompt)

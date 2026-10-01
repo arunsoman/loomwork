@@ -194,6 +194,11 @@ func (t *workflowTab) key(m *Model, k tea.KeyMsg) tea.Cmd {
 			t.sel++
 			mark()
 		}
+	case "x":
+		// none → each agent in turn → none
+		opts := append([]string{""}, m.d.Agents...)
+		t.wf.ContextAgent = nextAgent(opts, t.wf.ContextAgent)
+		mark()
 	case "m":
 		t.parallel()
 		mark()
@@ -273,7 +278,8 @@ func (t *workflowTab) view(m *Model) string {
 	if t.dirty {
 		dirty = " (unsaved)"
 	}
-	fmt.Fprintf(&b, "%s%s   parallel: %d   tests: %s\n\n", titleSt.Render("workflow "+t.wf.Name), dirty, max(1, t.wf.MaxParallel), orStr(t.wf.TestCmd, "none"))
+	fmt.Fprintf(&b, "%s%s   parallel: %d   tests: %s\n", titleSt.Render("workflow "+t.wf.Name), dirty, max(1, t.wf.MaxParallel), orStr(t.wf.TestCmd, "none"))
+	fmt.Fprintf(&b, "context manager agent: %s\n\n", orStr(t.wf.ContextAgent, "none (Loom's own selection only)"))
 	for i, s := range t.wf.Stages {
 		opt := ""
 		switch s.Kind {

@@ -55,6 +55,7 @@ func cmdFlowRun(args []string) {
 	yes := fs.Bool("yes", false, "approve the plan without asking")
 	push := fs.Bool("push", false, "allow the ship stage to push (still asks to confirm)")
 	folder := fs.String("folder", ".", "project folder (a git repository)")
+	ctxAgent := fs.String("context-agent", "", "agent that acts as the context manager for this run (overrides the workflow's)")
 	goal := strings.Join(parseArgs(fs, args), " ")
 	if goal == "" {
 		fail(fmt.Errorf("usage: loomwork flow run \"goal\" [--workflow name] [--yes] [--push]"))
@@ -70,6 +71,9 @@ func cmdFlowRun(args []string) {
 	w, err := flow.LoadWorkflow(abs, *name)
 	if err != nil {
 		fail(err)
+	}
+	if *ctxAgent != "" {
+		w.ContextAgent = *ctxAgent
 	}
 	if err := w.Validate(knownAgents(cfg)); err != nil {
 		fail(fmt.Errorf("workflow %s: %w", *name, err))
@@ -116,6 +120,10 @@ func cmdFlowRun(args []string) {
 func workflowAgents(w *flow.Workflow) string {
 	seen := map[string]bool{}
 	var out []string
+	if w.ContextAgent != "" {
+		seen[w.ContextAgent] = true
+		out = append(out, w.ContextAgent+" (context manager)")
+	}
 	for _, s := range w.Stages {
 		for _, a := range s.Agents {
 			if !seen[a] {
@@ -185,6 +193,12 @@ func cmdFlowContext(args []string) {
 			}
 			for _, d := range bn.Dropped {
 				fmt.Printf("    dropped: %s\n", d)
+			}
+			if bn.Curator != "" {
+				fmt.Printf("    context manager: %s; briefing: %q\n", bn.Curator, bn.Briefing)
+			}
+			for _, a := range bn.Anomalies {
+				fmt.Printf("    discarded from manager reply: %s\n", a)
 			}
 		}
 	case "show":

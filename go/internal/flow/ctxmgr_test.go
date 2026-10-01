@@ -72,20 +72,13 @@ func TestManagerSelectsByRoleAndBudget(t *testing.T) {
 	}
 }
 
-func TestManagerSummarizerAndRuneSafety(t *testing.T) {
+func TestTruncationIsRuneSafe(t *testing.T) {
 	dir := initRepo(t)
-	cm := &ContextManager{Folder: dir, Summarize: func(ctx context.Context, kind, text string, max int) (string, error) {
-		return "SHORT", nil
-	}}
+	cm := &ContextManager{Folder: dir}
 	rule := ContextRule{Include: []string{ItemGoal}, MaxBytes: 500}
 	b, _ := cm.Build(context.Background(), Request{Role: KindPlan, Agent: "x", Goal: strings.Repeat("é", 1000), Dir: dir, Rule: rule})
-	if !strings.Contains(b.Text, "SHORT") || !b.Items[0].Truncated {
-		t.Fatal("summarizer not used for over-budget item")
-	}
-	cm.Summarize = nil
-	b, _ = cm.Build(context.Background(), Request{Role: KindPlan, Agent: "x", Goal: strings.Repeat("é", 1000), Dir: dir, Rule: rule})
-	if !strings.HasSuffix(strings.TrimSpace(b.Text), "[truncated]") || strings.ContainsRune(b.Text, '�') {
-		t.Fatal("truncation produced invalid UTF-8")
+	if !strings.Contains(b.Text, "[truncated]") || strings.ContainsRune(b.Text, '\uFFFD') || b.Used > 500 {
+		t.Fatalf("truncation wrong (used %d)", b.Used)
 	}
 }
 

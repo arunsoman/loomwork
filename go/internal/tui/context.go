@@ -210,6 +210,15 @@ func (t *contextTab) view(m *Model) string {
 		if len(bn.Dropped) > 0 {
 			drop = fmt.Sprintf(" · dropped %d", len(bn.Dropped))
 		}
+		if bn.Curator != "" {
+			drop += " · manager " + bn.Curator
+			if bn.Briefing != "" {
+				drop += " (briefed)"
+			}
+			if len(bn.Anomalies) > 0 {
+				drop += errSt.Render(fmt.Sprintf(" ⚠ %d discarded", len(bn.Anomalies)))
+			}
+		}
 		fmt.Fprintf(&b, "  %s %-7s %-7s %-10s %d/%dB  %s%s\n", bn.Time.Local().Format("15:04:05"), bn.Role, bn.Agent, bn.Task, bn.Used, bn.Budget, strings.Join(parts, " "), drop)
 	}
 	if t.msg != "" {

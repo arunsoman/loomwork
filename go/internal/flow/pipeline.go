@@ -27,8 +27,6 @@ type Engine struct {
 	// Context holds the context manager's limits per role and agent. Nil
 	// means DefaultContext.
 	Context *ContextPolicy
-	// Summarize optionally compacts over-budget context (nil truncates).
-	Summarize func(ctx context.Context, kind, text string, max int) (string, error)
 
 	// Logf reports progress (may be nil).
 	Logf func(format string, args ...any)
@@ -90,8 +88,8 @@ func (e *Engine) prepare(role, agent, dir string, t *Task, feedback []string) (s
 		return "", fmt.Errorf("context for %s: %w", agent, err)
 	}
 	all, _ := e.Board.List()
-	cm := &ContextManager{Folder: e.Folder, Summarize: e.Summarize}
-	bundle, err := cm.Build(context.Background(), Request{Role: role, Agent: agent, Task: t, Goal: e.goal, All: all, Dir: dir, Feedback: feedback, Hidden: len(hidden), Rule: rule})
+	cm := e.contextManager()
+	bundle, err := cm.Build(context.Background(), Request{Role: role, Agent: agent, Task: t, Goal: e.goal, All: all, Dir: dir, Feedback: feedback, Hidden: len(hidden), Rule: rule, Pipeline: e.pipelineLine()})
 	if err != nil {
 		return "", err
 	}
@@ -100,9 +98,54 @@ func (e *Engine) prepare(role, agent, dir string, t *Task, feedback []string) (s
 		for _, it := range bundle.Items {
 			kinds = append(kinds, it.Kind)
 		}
-		t.Log(agent, "context", fmt.Sprintf("sent %d/%d bytes: %s; hidden files: %d; dropped: %d", bundle.Used, bundle.Budget, strings.Join(kinds, ","), len(hidden), len(bundle.Dropped)))
+		t.Log(agent, "context", fmt.Sprintf("sent %d/%d bytes: %s; hidden files: %d; dropped: %d%s", bundle.Used, bundle.Budget, strings.Join(kinds, ","), len(hidden), len(bundle.Dropped), anomalyNote(bundle)))
 	}
 	return bundle.Text, nil
+}
+
+func anomalyNote(b *Bundle) string {
+	if len(b.Anomalies) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; context manager anomalies: %d", len(b.Anomalies))
+}
+
+// pipelineLine describes the workflow in one line for the context manager.
+func (e *Engine) pipelineLine() string {
+	var parts []string
+	for _, s := range e.Workflow.Stages {
+		parts = append(parts, fmt.Sprintf("%s(%s)", s.Kind, strings.Join(s.Agents, "+")))
+	}
+	return strings.Join(parts, " -> ")
+}
+
+// contextManager builds the manager for one job. If the workflow names a
+// context agent, it runs tool-less in an empty directory so it has nothing to
+// read or act on; only the text it returns is used, and that is contained
+// (see curator.go).
+func (e *Engine) contextManager() *ContextManager {
+	cm := &ContextManager{Folder: e.Folder}
+	name := e.Workflow.ContextAgent
+	if name == "" {
+		return cm
+	}
+	cm.CuratorName, cm.SeeContent = name, true
+	cm.Curator = func(ctx context.Context, prompt string) (string, error) {
+		empty, err := os.MkdirTemp("", "loom-ctx-")
+		if err != nil {
+			return "", err
+		}
+		defer os.RemoveAll(empty)
+		res, err := e.Exec(ctx, name, agents.Job{Prompt: prompt, Dir: empty, Plain: true, Timeout: 3 * time.Minute})
+		if err != nil {
+			return "", err
+		}
+		if res.ExitCode != 0 {
+			return "", fmt.Errorf("exited %d: %s", res.ExitCode, tail(res.Stderr, 200))
+		}
+		return res.Stdout, nil
+	}
+	return cm
 }
 
 func (e *Engine) agent(kind string) string {
